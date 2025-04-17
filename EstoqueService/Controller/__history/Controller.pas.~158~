@@ -1,0 +1,527 @@
+unit Controller;
+
+interface
+{$REGION'Uses'}
+uses
+  Winapi.Windows,
+  Winapi.Messages,
+  System.SysUtils,
+  System.Classes,
+  Vcl.SvcMgr,
+  IdBaseComponent,
+  IdComponent,
+  IdCustomTCPServer,
+  IdCustomHTTPServer,
+  IdHTTPServer,
+  IdContext,
+  IdHTTPHeaderInfo,
+  System.JSON,
+  Data.DB,
+  FireDAC.Comp.Client,
+  FireDAC.Stan.Def,
+  FireDAC.Stan.Async,
+  FireDAC.Phys.SQLite,
+  FireDAC.DApt,
+  FireDAC.UI.Intf,
+  FireDAC.VCLUI.Wait,
+  System.JSON.Readers,
+  System.JSON.Types,
+  FireDAC.Stan.Intf,
+  FireDAC.Stan.Option,
+  FireDAC.Stan.Error,
+  FireDAC.Phys.Intf,
+  FireDAC.Stan.Pool,
+  FireDAC.Phys,
+  FireDAC.Phys.SQLiteDef,
+  FireDAC.Stan.ExprFuncs,
+  FireDAC.Phys.SQLiteWrapper.Stat,
+  System.IOUtils,
+  FireDAC.Stan.Param, FireDAC.Phys.FBDef, FireDAC.Phys.IBBase, FireDAC.Phys.FB;
+{$ENDREGION}
+type
+  TEstoqueController = class(TService)
+    FDConnection: TFDConnection;
+    IdHTTPServer: TIdHTTPServer;
+    FDPhysFBDriverLink: TFDPhysFBDriverLink;
+    procedure ServiceCreate(Sender: TObject);
+    procedure ServiceStart(Sender: TService; var Started: Boolean);
+    procedure ServiceStop(Sender: TService; var Stopped: Boolean);
+    procedure IdHTTPServerCommandGet(AContext: TIdContext;
+      ARequestInfo: TIdHTTPRequestInfo; AResponseInfo: TIdHTTPResponseInfo);
+  private
+    procedure GetProduto(ARequestInfo: TIdHTTPRequestInfo; AResponseInfo: TIdHTTPResponseInfo);
+    procedure GetProdutoEAN(ARequestInfo: TIdHTTPRequestInfo; AResponseInfo: TIdHTTPResponseInfo);
+    procedure PostProduto(ARequestInfo: TIdHTTPRequestInfo; AResponseInfo: TIdHTTPResponseInfo);
+    procedure PutSaldo(ARequestInfo: TIdHTTPRequestInfo; AResponseInfo: TIdHTTPResponseInfo);
+    procedure PostAtualizarProduto(ARequestInfo: TIdHTTPRequestInfo; AResponseInfo: TIdHTTPResponseInfo);
+    procedure PostDeleteProduto(ARequestInfo: TIdHTTPRequestInfo; AResponseInfo: TIdHTTPResponseInfo);
+    procedure GravarLog(const Mensagem: string);
+  public
+    function GetServiceController: TServiceController; override;
+  end;
+
+var
+  EstoqueController: TEstoqueController;
+
+implementation
+
+uses
+  System.StrUtils;
+
+{$R *.dfm}
+
+procedure ServiceController(CtrlCode: DWord); stdcall;
+begin
+  EstoqueController.Controller(CtrlCode);
+end;
+
+procedure TEstoqueController.GetProdutoEAN(ARequestInfo: TIdHTTPRequestInfo; AResponseInfo: TIdHTTPResponseInfo);
+var
+  EAN: string;
+  Query: TFDQuery;
+  JSONArray: TJSONArray;
+  JSONItem: TJSONObject;
+begin
+  Query := nil;
+  JSONArray := nil;
+  try
+    EAN := ARequestInfo.Document.Replace('/produto/', '');
+    Query := TFDQuery.Create(nil);
+    Query.Connection := FDConnection;
+    Query.SQL.Text := 'SELECT * FROM Produtos WHERE EAN = :ean';
+    Query.ParamByName('ean').AsString := EAN;
+    Query.Open;
+
+    JSONArray := TJSONArray.Create;
+
+    while not Query.Eof do
+    begin
+      JSONItem := TJSONObject.Create;
+      JSONItem.AddPair('ID', Query.FieldByName('ID').AsString);
+      JSONItem.AddPair('EAN', Query.FieldByName('EAN').AsString);
+      JSONItem.AddPair('Nome', Query.FieldByName('Nome').AsString);
+      JSONItem.AddPair('Saldo', Query.FieldByName('Saldo').AsString);
+      JSONItem.AddPair('Custo', Query.FieldByName('Custo').AsString);
+      JSONItem.AddPair('Preco', Query.FieldByName('Preco').AsString);
+      JSONArray.AddElement(JSONItem);
+      Query.Next;
+    end;
+
+    AResponseInfo.ContentType := 'application/json';
+
+    if JSONArray.Count > 0 then
+      AResponseInfo.ContentText := JSONArray.ToJSON
+    else
+      AResponseInfo.ContentText := '[]';
+
+  finally
+    if Assigned(Query) then
+      Query.Free;
+
+    if Assigned(JSONArray) then
+      JSONArray.Free;
+
+  end;
+end;
+
+function TEstoqueController.GetServiceController: TServiceController;
+begin
+  Result := ServiceController;
+end;
+
+procedure TEstoqueController.GravarLog(const Mensagem: string);
+var
+  PastaBase, PastaLog, CaminhoLog: string;
+begin
+    PastaBase := ExtractFileDir(ExtractFileDir(ExtractFileDir(ExtractFileDir(ExtractFilePath(ParamStr(0))))));
+    PastaLog := IncludeTrailingPathDelimiter(PastaBase) + 'LOG\';
+    ForceDirectories(PastaLog);
+
+    CaminhoLog := PastaLog + 'EstoqueServiceLog.txt';
+    TFile.AppendAllText(CaminhoLog, Mensagem + sLineBreak, TEncoding.UTF8);
+end;
+
+procedure TEstoqueController.IdHTTPServerCommandGet(AContext: TIdContext; ARequestInfo: TIdHTTPRequestInfo; AResponseInfo: TIdHTTPResponseInfo);
+var
+  Path, Metodo: string;
+begin
+  Path := ARequestInfo.Document.ToLower.Trim(['/']);
+  Metodo := ARequestInfo.Command.ToUpper;
+  GravarLog('>> ' + Metodo + ' - ' + Path);
+
+  if ((Path = 'produto') and (Metodo = 'GET')) then
+    GetProduto(ARequestInfo, AResponseInfo)
+  else if (Path.StartsWith('produto/') and (Metodo = 'GET')) then
+    GetProdutoEAN(ARequestInfo, AResponseInfo)
+  else if (Path = 'produto') and (Metodo = 'POST') then
+    PostProduto(ARequestInfo, AResponseInfo)
+  else if (Path = 'produto/saldo') and (Metodo = 'POST') then
+    PutSaldo(ARequestInfo, AResponseInfo)
+  else if Path.StartsWith('produto/delete') and (Metodo = 'POST') then
+    PostDeleteProduto(ARequestInfo, AResponseInfo)
+  else if (Path.StartsWith('produto/') and (Metodo = 'POST')) then
+    PostAtualizarProduto(ARequestInfo, AResponseInfo)
+  else
+  begin
+    AResponseInfo.ResponseNo := 404;
+    AResponseInfo.ContentText := 'Endpoint não encontrado';
+  end;
+end;
+
+procedure TEstoqueController.ServiceCreate(Sender: TObject);
+begin
+  try
+    FDConnection.Params.DriverID := 'FB';
+    FDConnection.Params.Database := 'C:\VIASOFT\Data\BANCO.FDB';
+    FDConnection.Params.UserName := 'SYSDBA';
+    FDConnection.Params.Password := 'masterkey';
+    FDConnection.LoginPrompt := False;
+    FDConnection.Connected := True;
+    GravarLog('ServiceCreate executado com sucesso');
+  except
+    on E: Exception do
+      GravarLog('ERRO ServiceCreate: ' + E.Message);
+  end;
+end;
+
+procedure TEstoqueController.ServiceStart(Sender: TService; var Started: Boolean);
+begin
+  try
+    IdHTTPServer.DefaultPort := 8081;
+    IdHTTPServer.Active := True;
+    Started := True;
+    GravarLog('ServiceStart executado com sucesso');
+  except
+    on E: Exception do
+    begin
+      GravarLog('ERRO ServiceStart: ' + E.Message);
+      Started := False;
+    end;
+  end;
+end;
+
+procedure TEstoqueController.ServiceStop(Sender: TService; var Stopped: Boolean);
+begin
+  IdHTTPServer.Active := False;
+  Stopped := True;
+end;
+
+procedure TEstoqueController.PostDeleteProduto(ARequestInfo: TIdHTTPRequestInfo; AResponseInfo: TIdHTTPResponseInfo);
+var
+  ProdutoID: Integer;
+  Query: TFDQuery;
+  JSONString: TStringStream;
+begin
+  Query := nil;
+  try
+    try
+      JSONString := TStringStream.Create;
+      ARequestInfo.PostStream.Position := 0;
+      JSONString.CopyFrom(ARequestInfo.PostStream, ARequestInfo.PostStream.Size);
+      ProdutoID := StrToIntDef(ARequestInfo.Document.Replace('/produto/delete/', ''), 0);
+      if ProdutoID = 0 then
+      begin
+        AResponseInfo.ResponseNo := 400;
+        AResponseInfo.ContentText := 'ID do produto inválido';
+        Exit;
+      end;
+
+      Query := TFDQuery.Create(nil);
+      FDConnection.StartTransaction;
+      Query.Connection := FDConnection;
+      Query.SQL.Text :=
+        'SELECT 1 FROM ItensNotaFiscal INF ' +
+        'JOIN NotasFiscais NF ON INF.NotaID = NF.ID ' +
+        'WHERE INF.ProdutoID = :id AND NF.Status = ''aberto''';
+      Query.ParamByName('id').AsInteger := ProdutoID;
+      Query.Open;
+
+      if not Query.IsEmpty then
+      begin
+        FDConnection.Rollback;
+        AResponseInfo.ResponseNo := 409;
+        AResponseInfo.ContentText := 'Produto vinculado a nota fiscal em aberto. Exclusão não permitida.';
+        Exit;
+      end;
+
+      Query.Close;
+      Query.SQL.Text := 'DELETE FROM Produtos WHERE ID = :id';
+      Query.ParamByName('id').AsInteger := ProdutoID;
+      Query.ExecSQL;
+
+      FDConnection.Commit;
+      AResponseInfo.ContentText := 'Produto excluído com sucesso';
+    except
+      on E: Exception do
+      begin
+        FDConnection.Rollback;
+        AResponseInfo.ResponseNo := 500;
+        AResponseInfo.ContentText := 'Erro ao excluir produto';
+         GravarLog('Erro no DeleteProduto: ' + E.Message);
+      end;
+    end;
+  finally
+    Query.Free;
+  end;
+end;
+
+procedure TEstoqueController.GetProduto(ARequestInfo: TIdHTTPRequestInfo; AResponseInfo: TIdHTTPResponseInfo);
+var
+  Query: TFDQuery;
+  JSONArray: TJSONArray;
+  JSONItem: TJSONObject;
+begin
+  Query := nil;
+  JSONArray := nil;
+  try
+    Query := TFDQuery.Create(nil);
+    Query.Connection := FDConnection;
+    Query.SQL.Text := 'SELECT * FROM Produtos';
+    Query.Open;
+
+    JSONArray := TJSONArray.Create;
+
+    while not Query.Eof do
+    begin
+      JSONItem := TJSONObject.Create;
+      JSONItem.AddPair('ID', Query.FieldByName('ID').AsString);
+      JSONItem.AddPair('EAN', Query.FieldByName('EAN').AsString);
+      JSONItem.AddPair('Nome', Query.FieldByName('Nome').AsString);
+      JSONItem.AddPair('Saldo', Query.FieldByName('Saldo').AsString);
+      JSONItem.AddPair('Custo', Query.FieldByName('Custo').AsString);
+      JSONItem.AddPair('Preco', Query.FieldByName('Preco').AsString);
+      JSONArray.AddElement(JSONItem);
+      Query.Next;
+    end;
+
+    AResponseInfo.ContentType := 'application/json';
+    AResponseInfo.ContentText := JSONArray.ToJSON;
+
+  finally
+    if Assigned(Query) then
+      Query.Free;
+
+    if Assigned(JSONArray) then
+      JSONArray.Free;
+
+  end;
+end;
+
+procedure TEstoqueController.PostAtualizarProduto(ARequestInfo: TIdHTTPRequestInfo; AResponseInfo: TIdHTTPResponseInfo);
+var
+  JSON: TJSONObject;
+  JSONValue: TJSONValue;
+  JSONString: TStringStream;
+  Query: TFDQuery;
+  ProdutoID: Integer;
+  EAN: string;
+begin
+  JSON := nil;
+  JSONString := nil;
+  Query := nil;
+
+  try
+    JSONString := TStringStream.Create;
+    ARequestInfo.PostStream.Position := 0;
+    JSONString.CopyFrom(ARequestInfo.PostStream, ARequestInfo.PostStream.Size);
+    JSONValue := TJSONObject.ParseJSONValue(JSONString.DataString);
+    JSON := JSONValue as TJSONObject;
+
+    ProdutoID := StrToIntDef(ARequestInfo.Document.Replace('/produto/', ''), 0);
+    if ProdutoID = 0 then
+    begin
+      AResponseInfo.ResponseNo := 400;
+      AResponseInfo.ContentText := 'ID do produto inválido';
+      Exit;
+    end;
+
+    EAN := JSON.GetValue<string>('EAN');
+
+    Query := TFDQuery.Create(nil);
+    try
+      FDConnection.StartTransaction;
+      Query.Connection := FDConnection;
+      Query.SQL.Text :=
+        'UPDATE Produtos SET EAN = :ean, Nome = :nome, Saldo = :saldo, Custo = :custo, Preco = :preco ' +
+        'WHERE ID = :id';
+
+      Query.ParamByName('id').AsInteger := ProdutoID;
+      Query.ParamByName('ean').AsString := JSON.GetValue<string>('EAN');
+      Query.ParamByName('nome').AsString := JSON.GetValue<string>('Nome');
+      Query.ParamByName('saldo').AsInteger := JSON.GetValue<Integer>('Saldo');
+      Query.ParamByName('custo').AsFloat := StrToFloat(
+        StringReplace(JSON.GetValue<string>('Custo'), '.', FormatSettings.DecimalSeparator, [rfReplaceAll]));
+      Query.ParamByName('preco').AsFloat := StrToFloat(
+        StringReplace(JSON.GetValue<string>('Preco'), '.', FormatSettings.DecimalSeparator, [rfReplaceAll]));
+
+      Query.ExecSQL;
+      FDConnection.Commit;
+
+      AResponseInfo.ContentText := 'Produto atualizado com sucesso';
+    except
+      on E: Exception do
+      begin
+        FDConnection.Rollback;
+        AResponseInfo.ResponseNo := 500;
+        AResponseInfo.ContentText := 'Erro ao atualizar produto';
+         GravarLog('Erro no PostAtualizarProduto: ' + E.Message);
+      end;
+    end;
+  finally
+    if Assigned(JSON) then
+      JSON.Free;
+
+    if Assigned(JSONString) then
+      JSONString.Free;
+
+    if Assigned(Query) then
+      Query.Free;
+
+  end;
+end;
+
+procedure TEstoqueController.PostProduto(ARequestInfo: TIdHTTPRequestInfo; AResponseInfo: TIdHTTPResponseInfo);
+var
+  JSON: TJSONObject;
+  JSONValue: TJSONValue;
+  JSONString: TStringStream;
+  Query: TFDQuery;
+  EAN: string;
+begin
+  JSON := nil;
+  JSONString := nil;
+  Query := nil;
+  try
+    JSONString := TStringStream.Create;
+    ARequestInfo.PostStream.Position := 0;
+    JSONString.CopyFrom(ARequestInfo.PostStream, ARequestInfo.PostStream.Size);
+    JSONValue := TJSONObject.ParseJSONValue(JSONString.DataString);
+    JSON := JSONValue as TJSONObject;
+
+    EAN := JSON.GetValue<string>('EAN');
+
+    Query := TFDQuery.Create(nil);
+    try
+      FDConnection.StartTransaction;
+      Query.Connection := FDConnection;
+      Query.SQL.Text :=
+        'INSERT INTO Produtos (EAN, Nome, Saldo, Custo, Preco) ' +
+        'VALUES (:ean, :nome, :saldo, :custo, :preco) RETURNING ID';
+      Query.ParamByName('ean').AsString := EAN;
+      Query.ParamByName('nome').AsString := JSON.GetValue<string>('Nome');
+      Query.ParamByName('saldo').AsInteger := JSON.GetValue<Integer>('Saldo');
+      Query.ParamByName('custo').AsFloat := JSON.GetValue<Double>('Custo');
+      Query.ParamByName('preco').AsFloat := JSON.GetValue<Double>('Preco');
+      Query.Open;
+      FDConnection.Commit;
+
+      AResponseInfo.ContentType := 'application/json';
+      AResponseInfo.ContentText := '{"ID": ' + Query.FieldByName('ID').AsString + '}';
+    except
+      on E: Exception do
+      begin
+        FDConnection.Rollback;
+        AResponseInfo.ResponseNo := 500;
+        AResponseInfo.ContentText := 'Erro ao cadastrar produto';
+        GravarLog('Erro no PostProduto: ' + E.Message);
+      end;
+    end;
+  finally
+    if Assigned(JSON) then
+      JSON.Free;
+
+    if Assigned(JSONString) then
+      JSONString.Free;
+
+    if Assigned(Query) then
+      Query.Free;
+
+  end;
+end;
+
+procedure TEstoqueController.PutSaldo(ARequestInfo: TIdHTTPRequestInfo; AResponseInfo: TIdHTTPResponseInfo);
+var
+  JSON: TJSONObject;
+  JSONValue: TJSONValue;
+  JSONString: TStringStream;
+  Query: TFDQuery;
+  ProdutoID, Quantidade, SaldoAtual: Integer;
+begin
+  JSON := nil;
+  JSONString := nil;
+  Query := nil;
+
+  try
+    JSONString := TStringStream.Create;
+    ARequestInfo.PostStream.Position := 0;
+    JSONString.CopyFrom(ARequestInfo.PostStream, ARequestInfo.PostStream.Size);
+    JSONValue := TJSONObject.ParseJSONValue(JSONString.DataString);
+    JSON := JSONValue as TJSONObject;
+    if not JSON.TryGetValue<Integer>('ProdutoID', ProdutoID) or
+    not JSON.TryGetValue<Integer>('Quantidade', Quantidade) then
+    begin
+      AResponseInfo.ResponseNo := 400;
+      AResponseInfo.ContentText := 'JSON inválido: ProdutoID ou Quantidade não informado';
+      Exit;
+    end;
+
+    ProdutoID := JSON.GetValue<Integer>('ProdutoID');
+    Quantidade := JSON.GetValue<Integer>('Quantidade');
+
+    Query := TFDQuery.Create(nil);
+    try
+      FDConnection.StartTransaction;
+      Query.Connection := FDConnection;
+
+      Query.SQL.Text := 'SELECT Saldo FROM Produtos WHERE ID = :id';
+      Query.ParamByName('id').AsInteger := ProdutoID;
+      Query.Open;
+
+      if Query.IsEmpty then
+      begin
+        FDConnection.Rollback;
+        AResponseInfo.ResponseNo := 400;
+        AResponseInfo.ContentText := 'Produto não encontrado';
+        Exit;
+      end;
+
+      SaldoAtual := Query.FieldByName('Saldo').AsInteger;
+      if SaldoAtual < Quantidade then
+      begin
+        FDConnection.Rollback;
+        AResponseInfo.ResponseNo := 409;
+        AResponseInfo.ContentText := 'Saldo insuficiente';
+        Exit;
+      end;
+
+      Query.Close;
+      Query.SQL.Text := 'UPDATE Produtos SET Saldo = Saldo - :qtd WHERE ID = :id';
+      Query.ParamByName('qtd').AsInteger := Quantidade;
+      Query.ParamByName('id').AsInteger := ProdutoID;
+      Query.ExecSQL;
+
+      FDConnection.Commit;
+      AResponseInfo.ContentText := 'Saldo atualizado com sucesso';
+    except
+      on E: Exception do
+      begin
+        FDConnection.Rollback;
+        AResponseInfo.ResponseNo := 500;
+        AResponseInfo.ContentText := 'Erro ao atualizar saldo';
+        GravarLog('Erro no PutSaldo: ' + E.Message);
+      end;
+    end;
+  finally
+    if Assigned(JSON) then
+       JSON.Free;
+
+    if Assigned(JSONString) then
+      JSONString.Free;
+
+    if Assigned(Query) then
+      Query.Free;
+
+  end;
+end;
+
+end.

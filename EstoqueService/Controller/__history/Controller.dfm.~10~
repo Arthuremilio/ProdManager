@@ -1,0 +1,24 @@
+object EstoqueController: TEstoqueController
+  OnCreate = ServiceCreate
+  DisplayName = 'EstoqueController'
+  OnStart = ServiceStart
+  Height = 750
+  Width = 1000
+  PixelsPerInch = 120
+  object FDConnection: TFDConnection
+    Params.Strings = (
+      'DriverID=SQLite')
+    Left = 80
+    Top = 96
+  end
+  object IdHTTPServer: TIdHTTPServer
+    Bindings = <>
+    OnCommandGet = IdHTTPServerCommandGet
+    Left = 192
+    Top = 104
+  end
+  object FDPhysFBDriverLink: TFDPhysFBDriverLink
+    Left = 80
+    Top = 160
+  end
+end

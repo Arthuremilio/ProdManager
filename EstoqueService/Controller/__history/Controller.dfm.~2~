@@ -1,0 +1,15 @@
+object EstoqueController: TEstoqueController
+  DisplayName = 'EstoqueController'
+  Height = 750
+  Width = 1000
+  PixelsPerInch = 120
+  object FDConnection: TFDConnection
+    Left = 72
+    Top = 88
+  end
+  object IdHTTPServer1: TIdHTTPServer
+    Bindings = <>
+    Left = 192
+    Top = 96
+  end
+end
