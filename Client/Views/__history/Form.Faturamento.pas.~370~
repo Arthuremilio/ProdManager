@@ -1,0 +1,1096 @@
+unit Form.Faturamento;
+
+interface
+
+{$REGION 'Uses'}
+uses
+  Winapi.Windows,
+  Winapi.Messages,
+  System.SysUtils,
+  System.Variants,
+  System.Classes,
+  Vcl.Graphics,
+  Vcl.Controls,
+  Vcl.Forms,
+  Vcl.Dialogs,
+  Data.DB,
+  Vcl.Grids,
+  Vcl.DBGrids,
+  Vcl.Buttons,
+  Vcl.ExtCtrls,
+  Vcl.ComCtrls,
+  IdBaseComponent,
+  IdComponent,
+  IdTCPConnection,
+  IdTCPClient,
+  IdHTTP,
+  Datasnap.DBClient,
+  Vcl.StdCtrls,
+  Vcl.Mask,
+  JSON,
+  IdSocketHandle,
+  IdException,
+  IdStack,
+  Math,
+  System.Generics.Collections,
+  Vcl.Menus,
+  System.IOUtils,
+  System.UITypes;
+{$ENDREGION}
+
+type
+  TfrmFaturamento = class(TForm)
+    pcFaturamento: TPageControl;
+    tsPesquisa: TTabSheet;
+    pnlPesquisa: TPanel;
+    btnPesquisa: TSpeedButton;
+    grdPesquisa: TDBGrid;
+    tsCadastro: TTabSheet;
+    pnlManipularDados: TPanel;
+    btnCancelar: TSpeedButton;
+    btnGravar: TSpeedButton;
+    btnExcluir: TSpeedButton;
+    pnlCadastro: TPanel;
+    cdsPesquisa: TClientDataSet;
+    dsPesquisa: TDataSource;
+    IdHTTP: TIdHTTP;
+    grdItemNota: TDBGrid;
+    gbCadastrarItem: TGroupBox;
+    lblProduto: TLabel;
+    cmbProduto: TComboBox;
+    GroupBox1: TGroupBox;
+    lblQtde: TLabel;
+    edtQtde: TMaskEdit;
+    btnCadastrarItem: TSpeedButton;
+    GroupBox2: TGroupBox;
+    lblID: TLabel;
+    lblRazao: TLabel;
+    lblCNPJ: TLabel;
+    lblDestinatario: TLabel;
+    lblDocumento: TLabel;
+    edtID: TMaskEdit;
+    edtRazao: TMaskEdit;
+    edtCNPJ: TMaskEdit;
+    edtDestinatario: TMaskEdit;
+    edtDocumento: TMaskEdit;
+    btnAdicionarItem: TSpeedButton;
+    btnCancelarItem: TSpeedButton;
+    cdsItensNota: TClientDataSet;
+    dsItensNota: TDataSource;
+    lblPID: TLabel;
+    edtPID: TMaskEdit;
+    cdsPesquisaID: TIntegerField;
+    cdsPesquisaCHAVE: TStringField;
+    cdsPesquisaCNPJEMISSOR: TStringField;
+    cdsPesquisaRAZAOEMISSOR: TStringField;
+    cdsPesquisaNOMEDEST: TStringField;
+    cdsPesquisaSTATUS: TStringField;
+    cdsPesquisaVALORTOTAL: TFloatField;
+    cdsPesquisaDOCUMENTODEST: TStringField;
+    cdsItensNotaNOME: TStringField;
+    cdsItensNotaQUANTIDADE: TIntegerField;
+    cdsItensNotaVALOR: TFloatField;
+    lblStatus: TLabel;
+    lblStatusValor: TLabel;
+    lblValorTotal: TLabel;
+    lblValorTotalValor: TLabel;
+    cdsItensNotaID: TIntegerField;
+    Label1: TLabel;
+    lblPreco: TLabel;
+    edtPreco: TMaskEdit;
+    lblProdutoID: TLabel;
+    cdsItensNotaProdutoID: TIntegerField;
+    pmItensNota: TPopupMenu;
+    ExcluirItem: TMenuItem;
+    btnImprimir: TSpeedButton;
+    procedure FormClose(Sender: TObject; var Action: TCloseAction);
+    procedure btnPesquisaClick(Sender: TObject);
+    procedure btnAdicionarItemClick(Sender: TObject);
+    procedure FormCreate(Sender: TObject);
+    procedure btnGravarClick(Sender: TObject);
+    procedure grdPesquisaDblClick(Sender: TObject);
+    procedure btnCancelarClick(Sender: TObject);
+    procedure btnExcluirClick(Sender: TObject);
+    procedure btnCancelarItemClick(Sender: TObject);
+    procedure cmbProdutoChange(Sender: TObject);
+    procedure btnCadastrarItemClick(Sender: TObject);
+    procedure FormDestroy(Sender: TObject);
+    procedure grdItemNotaDblClick(Sender: TObject);
+    procedure ExcluirItemClick(Sender: TObject);
+    procedure btnImprimirClick(Sender: TObject);
+  private
+    PrecosProdutos: TDictionary<Integer, Double>;
+    procedure PesquisarNotas;
+    procedure PesquisarNotaID(const ID: string);
+    function ValidarDados: Boolean;
+    procedure PreencherCmbProduto;
+    procedure AdicionarNota;
+    procedure PreencherDados;
+    procedure Limpar;
+    procedure AtualizarNota;
+    procedure PreencherItensNota(NotaID: Integer);
+    procedure AdicionarItemNota;
+    procedure FecharGbCadastrarItem;
+    procedure PreencherGbCadastrarItem;
+    procedure AtualizarItemNota;
+    procedure ExcluirItemNota(const ID: string; HTTP: TIdHTTP);
+    procedure CalcularValorTotal;
+    procedure ExcluirNota(const ID: string);
+    procedure GerarChave;
+    procedure ImprimirNotaFiscal(const ID: string);
+    procedure gerarArquivo(const ID: string);
+
+  public
+  end;
+
+var
+  frmFaturamento: TfrmFaturamento;
+
+implementation
+
+{$R *.dfm}
+
+procedure TfrmFaturamento.AdicionarItemNota;
+var
+  JSON: TJSONObject;
+  HTTP: TIdHTTP;
+  Payload: TStringStream;
+begin
+  JSON := nil;
+  HTTP := nil;
+  Payload := nil;
+
+  try
+    JSON := TJSONObject.Create;
+    HTTP := TIdHTTP.Create(nil);
+
+    JSON.AddPair('NotaID', edtID.Text);
+    JSON.AddPair('ProdutoID', IntToStr(Integer(cmbProduto.Items.Objects[cmbProduto.ItemIndex])));
+    JSON.AddPair('Quantidade', edtQtde.Text);
+    JSON.AddPair('ValorUnitario', StringReplace(edtPreco.Text, ',', '.', [rfReplaceAll]));
+
+    Payload := TStringStream.Create(JSON.ToJSON, TEncoding.UTF8);
+    HTTP.Request.ContentType := 'application/json';
+
+    try
+      HTTP.Post('http://localhost:8082/nota/item', Payload);
+      ShowMessage('Item adicionado à nota com sucesso!');
+    except
+      on E: EIdSocketError do
+        ShowMessage('Erro de conexão: serviço de faturamento está desligado.');
+      on E: Exception do
+        ShowMessage('Erro ao adicionar item: ' + E.Message);
+    end;
+
+  finally
+    if Assigned(JSON) then
+      JSON.Free;
+
+    if Assigned(HTTP) then
+      HTTP.Free;
+
+    if Assigned(Payload) then
+      Payload.Free;
+
+  end;
+end;
+
+procedure TfrmFaturamento.AdicionarNota;
+var
+  JSON, Obj: TJSONObject;
+  HTTP: TIdHTTP;
+  Payload: TStringStream;
+  Resp: string;
+begin
+  JSON := nil;
+  HTTP := nil;
+  Payload := nil;
+  Obj := nil;
+
+  try
+    JSON := TJSONObject.Create;
+    HTTP := TIdHTTP.Create(nil);
+
+    JSON.AddPair('Chave', '');
+    JSON.AddPair('CNPJ_EMISSOR', edtCNPJ.Text);
+    JSON.AddPair('RAZAO_EMISSOR', edtRazao.Text);
+    JSON.AddPair('DOCUMENTO_DEST', edtDocumento.Text);
+    JSON.AddPair('NOME_DEST', edtDestinatario.Text);
+    JSON.AddPair('Status', 'aberta');
+    JSON.AddPair('ValorTotal', '0');
+
+    Payload := TStringStream.Create(JSON.ToJSON, TEncoding.UTF8);
+    HTTP.Request.ContentType := 'application/json';
+
+    try
+      Resp := HTTP.Post('http://localhost:8082/nota', Payload);
+      Obj := TJSONObject.ParseJSONValue(Resp) as TJSONObject;
+      if Assigned(Obj) and (Obj.GetValue('ID') <> nil) then
+        edtID.Text := Obj.GetValue<Integer>('ID').ToString;
+      ShowMessage('Nota cadastrada com sucesso!');
+    except
+      on E: EIdSocketError do
+        ShowMessage('Erro de conexão: serviço de faturamento está desligado.');
+      on E: Exception do
+        ShowMessage('Erro ao cadastrar nota: ' + E.Message);
+    end;
+
+  finally
+    if Assigned(JSON) then
+      JSON.Free;
+
+    if Assigned(HTTP) then
+      HTTP.Free;
+
+    if Assigned(Payload) then
+      Payload.Free;
+
+    if Assigned(Obj) then
+      Obj.Free;
+
+  end;
+end;
+
+procedure TfrmFaturamento.AtualizarItemNota;
+var
+  JSON: TJSONObject;
+  HTTP: TIdHTTP;
+  Payload: TStringStream;
+begin
+  if not Assigned(cdsItensNota) or cdsItensNota.IsEmpty then
+  begin
+    ShowMessage('Nenhum item selecionado para atualizar.');
+    Exit;
+  end;
+
+  JSON := nil;
+  HTTP := nil;
+  Payload := nil;
+
+  try
+    JSON := TJSONObject.Create;
+    HTTP := TIdHTTP.Create(nil);
+
+    JSON.AddPair('NotaID', edtID.Text);
+    JSON.AddPair('ProdutoID', IntToStr(Integer(cmbProduto.Items.Objects[cmbProduto.ItemIndex])));
+    JSON.AddPair('Quantidade', edtQtde.Text);
+    JSON.AddPair('ValorUnitario', StringReplace(edtPreco.Text, ',', '.', [rfReplaceAll]));
+
+    Payload := TStringStream.Create(JSON.ToJSON, TEncoding.UTF8);
+    HTTP.Request.ContentType := 'application/json';
+
+    try
+      HTTP.Post('http://localhost:8082/nota/item/atualizar/'+ lblProdutoID.Caption, Payload);
+      ShowMessage('Item da nota atualizado com sucesso!');
+    except
+      on E: EIdSocketError do
+        ShowMessage('Erro de conexão: serviço de faturamento está desligado.');
+      on E: Exception do
+        ShowMessage('Erro ao atualizar item: ' + E.Message);
+    end;
+  finally
+    if Assigned(JSON) then
+      JSON.Free;
+
+    if Assigned(HTTP) then
+      HTTP.Free;
+
+    if Assigned(Payload) then
+      Payload.Free;
+
+  end;
+end;
+
+procedure TfrmFaturamento.AtualizarNota;
+var
+  JSON: TJSONObject;
+  HTTP: TIdHTTP;
+  Payload: TStringStream;
+  URL: string;
+begin
+  JSON := nil;
+  HTTP := nil;
+  Payload := nil;
+
+  if Trim(edtID.Text).IsEmpty then
+  begin
+    ShowMessage('ID da nota não informado.');
+    Exit;
+  end;
+
+  if lblStatusValor.Caption = 'FECHADA' then
+  begin
+    ShowMessage('Nota fiscal fechada, não há possibilidade de altera-la');
+    Exit;
+  end;
+
+  try
+    JSON := TJSONObject.Create;
+    HTTP := TIdHTTP.Create(nil);
+    JSON.AddPair('CNPJ_EMISSOR', edtCNPJ.Text);
+    JSON.AddPair('RAZAO_EMISSOR', edtRazao.Text);
+    JSON.AddPair('DOCUMENTO_DEST', edtDocumento.Text);
+    JSON.AddPair('NOME_DEST', edtDestinatario.Text);
+
+    Payload := TStringStream.Create(JSON.ToJSON, TEncoding.UTF8);
+    HTTP.Request.ContentType := 'application/json';
+
+    URL := 'http://localhost:8082/nota/atualizar/' + edtID.Text;
+
+    try
+      HTTP.Post(URL, Payload);
+      ShowMessage('Nota atualizada com sucesso!');
+    except
+      on E: EIdSocketError do
+        ShowMessage('Erro de conexão: serviço de faturamento está desligado.');
+      on E: Exception do
+        ShowMessage('Erro ao atualizar nota: ' + E.Message);
+    end;
+
+  finally
+    if Assigned(JSON) then
+      JSON.Free;
+
+    if Assigned(HTTP) then
+      HTTP.Free;
+
+    if Assigned(Payload) then
+      Payload.Free;
+
+  end;
+end;
+
+procedure TfrmFaturamento.btnAdicionarItemClick(Sender: TObject);
+begin
+  if lblStatusValor.Caption = 'FECHADA' then
+  begin
+    ShowMessage('Nota fiscal fechada, não há possibilidade de adicionar mais itens');
+    Exit;
+  end;
+
+  if Trim(edtID.Text).ToInteger = 0 then
+    btnGravarClick(self);
+
+  PreencherCmbProduto;
+  gbCadastrarItem .Visible := True;
+end;
+
+procedure TfrmFaturamento.btnCadastrarItemClick(Sender: TObject);
+begin
+  if lblProdutoID.Caption <> '' then
+    AtualizarItemNota
+  else
+    AdicionarItemNota;
+
+  PreencherItensNota(Trim(edtID.Text).toInteger);
+  FecharGbCadastrarItem;
+  CalcularValorTotal;
+  PesquisarNotas;
+end;
+
+procedure TfrmFaturamento.btnCancelarClick(Sender: TObject);
+begin
+  Limpar;
+end;
+
+procedure TfrmFaturamento.btnCancelarItemClick(Sender: TObject);
+begin
+  gbCadastrarItem .Visible := False;
+  cmbProduto.Clear;
+  edtPreco.Clear;
+  edtQtde.Clear;
+end;
+
+procedure TfrmFaturamento.btnExcluirClick(Sender: TObject);
+begin
+  if lblStatusValor.Caption = 'FECHADA' then
+  begin
+    ShowMessage('Nota fiscal fechada, não há possibilidade de exclusão');
+    Exit;
+  end;
+
+  if MessageDlg('Deseja realmente excluir esta nota?', mtConfirmation, [mbYes, mbNo], 0) = mrNo then
+  Exit;
+  ExcluirNota(Trim(edtID.Text));
+  Limpar;
+  PesquisarNotas;
+end;
+
+procedure TfrmFaturamento.btnGravarClick(Sender: TObject);
+begin
+    if not ValidarDados then
+      Exit;
+
+    if Trim(edtID.Text).toInteger > 0 then
+    AtualizarNota
+  else
+    AdicionarNota;
+
+  PesquisarNotas;
+end;
+
+procedure TfrmFaturamento.btnImprimirClick(Sender: TObject);
+begin
+  if lblStatusValor.Caption = 'ABERTA' then
+    ImprimirNotaFiscal(Trim(edtID.Text))
+  else
+    gerarArquivo(Trim(edtID.Text));
+
+  PesquisarNotas;
+end;
+
+procedure TfrmFaturamento.btnPesquisaClick(Sender: TObject);
+begin
+  if Trim(edtPID.Text).IsEmpty then
+    PesquisarNotas
+  else
+    PesquisarNotaID(Trim(edtPID.Text));
+end;
+
+procedure TfrmFaturamento.CalcularValorTotal;
+var
+  JSON: TJSONObject;
+  HTTP: TIdHTTP;
+  Payload: TStringStream;
+  URL: string;
+  Total: Double;
+begin
+  if Trim(edtID.Text).IsEmpty then
+    Exit;
+
+  Total := 0;
+  cdsItensNota.DisableControls;
+  try
+    cdsItensNota.First;
+    while not cdsItensNota.Eof do
+    begin
+      Total := Total + (cdsItensNota.FieldByName('QUANTIDADE').AsInteger *
+                        cdsItensNota.FieldByName('VALOR').AsFloat);
+      cdsItensNota.Next;
+    end;
+  finally
+    cdsItensNota.EnableControls;
+  end;
+
+  lblValorTotalValor.Caption := FormatFloat('R$ ,0.00', Total);
+
+  JSON := TJSONObject.Create;
+  HTTP := TIdHTTP.Create(nil);
+  Payload := TStringStream.Create('', TEncoding.UTF8);
+  try
+    JSON.AddPair('ValorTotal', FloatToStr(Total).Replace(',', '.'));
+    Payload.WriteString(JSON.ToJSON);
+    Payload.Position := 0;
+
+    HTTP.Request.ContentType := 'application/json';
+    URL := 'http://localhost:8082/nota/atualizar/valortotal/' + edtID.Text;
+    HTTP.Post(URL, Payload);
+  except
+    on E: Exception do
+      ShowMessage('Erro ao atualizar valor total: ' + E.Message);
+  end;
+
+    if Assigned(JSON) then
+      JSON.Free;
+
+    if Assigned(HTTP) then
+      HTTP.Free;
+
+    if Assigned(Payload) then
+      Payload.Free;
+
+end;
+
+procedure TfrmFaturamento.cmbProdutoChange(Sender: TObject);
+var
+  ProdutoID: Integer;
+  Preco: Double;
+begin
+  if cmbProduto.ItemIndex = -1 then
+    Exit;
+
+  ProdutoID := Integer(cmbProduto.Items.Objects[cmbProduto.ItemIndex]);
+
+  if PrecosProdutos.TryGetValue(ProdutoID, Preco) then
+    edtPreco.Text := FormatFloat('0.00', Preco);
+end;
+
+procedure TfrmFaturamento.ExcluirItemNota(const ID: string; HTTP: TIdHTTP);
+var
+  Payload: TStringStream;
+begin
+  Payload := TStringStream.Create('', TEncoding.UTF8);
+  try
+    HTTP.Request.ContentType := 'application/json';
+    HTTP.Post('http://localhost:8082/nota/item/deletar/' + ID, Payload);
+  finally
+    Payload.Free;
+  end;
+end;
+
+procedure TfrmFaturamento.ExcluirNota(const ID: string);
+var
+  HTTP: TIdHTTP;
+  Payload: TStringStream;
+begin
+  HTTP := TIdHTTP.Create(nil);
+  Payload := TStringStream.Create('', TEncoding.UTF8);
+  try
+     try
+      HTTP.Request.ContentType := 'application/json';
+      HTTP.Post('http://localhost:8082/nota/deletar/' + ID, Payload);
+      showMessage('Nota excluida com sucesso');
+    except
+      on E: EIdSocketError do
+        ShowMessage('Erro de conexão: serviço de faturamento está desligado.');
+      on E: Exception do
+        ShowMessage('Erro ao atualizar nota: ' + E.Message);
+    end;
+
+  finally
+    if Assigned(HTTP) then
+      HTTP.Free;
+
+    if Assigned(Payload) then
+      Payload.Free;
+
+  end;
+end;
+
+procedure TfrmFaturamento.ExcluirItemClick(Sender: TObject);
+var
+  HTTP: TIdHTTP;
+  ItemID: string;
+begin
+  if cdsItensNota.IsEmpty then
+  begin
+    ShowMessage('Nenhum item selecionado.');
+    Exit;
+  end;
+
+  if MessageDlg('Deseja realmente excluir este item da nota?', mtConfirmation, [mbYes, mbNo], 0) = mrNo then
+    Exit;
+
+  HTTP := TIdHTTP.Create(nil);
+  try
+    ItemID := cdsItensNota.FieldByName('ID').AsString;
+    ExcluirItemNota(ItemID, HTTP);
+    ShowMessage('Item excluído com sucesso!');
+    PreencherItensNota(Trim(edtID.Text).toInteger);
+    CalcularValorTotal;
+  except
+    on E: Exception do
+      ShowMessage('Erro ao excluir item: ' + E.Message);
+  end;
+  if Assigned(HTTP) then
+    HTTP.Free;
+
+end;
+
+procedure TfrmFaturamento.FecharGbCadastrarItem;
+begin
+  gbCadastrarItem .Visible := False;
+  cmbProduto.Clear;
+  edtPreco.Clear;
+  edtQtde.Clear;
+end;
+
+procedure TfrmFaturamento.FormClose(Sender: TObject; var Action: TCloseAction);
+begin
+  Action := caFree;
+end;
+
+procedure TfrmFaturamento.FormCreate(Sender: TObject);
+begin
+  PrecosProdutos := TDictionary<Integer, Double>.Create;
+  pcFaturamento.ActivePage := tsPesquisa;
+end;
+
+procedure TfrmFaturamento.FormDestroy(Sender: TObject);
+begin
+  if Assigned(PrecosProdutos) then
+      PrecosProdutos.Free;
+
+end;
+
+procedure TfrmFaturamento.gerarArquivo(const ID: string);
+var
+  HTTP: TIdHTTP;
+  NotaJSON: TJSONObject;
+  ItensArray: TJSONArray;
+  i: Integer;
+  Texto, LinhaItem, ArquivoPath, PastaBase, PastaNotas: string;
+begin
+  HTTP := TIdHTTP.Create(nil);
+  try
+    NotaJSON := TJSONObject.ParseJSONValue(HTTP.Get('http://localhost:8082/nota/' + ID)) as TJSONObject;
+    try
+      Texto := '=== NOTA FISCAL EMITIDA ===' + sLineBreak;
+      Texto := Texto + 'Chave: ' + NotaJSON.GetValue<string>('Chave') + sLineBreak;
+      Texto := Texto + 'Emitente: ' + NotaJSON.GetValue<string>('RAZAO_EMISSOR') + ' (CNPJ: ' + NotaJSON.GetValue<string>('CNPJ_EMISSOR') + ')' + sLineBreak;
+      Texto := Texto + 'Destinatário: ' + NotaJSON.GetValue<string>('NOME_DEST') + ' (Doc: ' + NotaJSON.GetValue<string>('DOCUMENTO_DEST') + ')' + sLineBreak;
+      Texto := Texto + 'Status: ' + NotaJSON.GetValue<string>('Status') + sLineBreak;
+      Texto := Texto + 'Valor Total: R$ ' + NotaJSON.GetValue<string>('ValorTotal') + sLineBreak;
+
+      Texto := Texto + sLineBreak + '--- Itens ---' + sLineBreak;
+
+      ItensArray := NotaJSON.GetValue<TJSONArray>('Itens');
+      for i := 0 to ItensArray.Count - 1 do
+      begin
+        LinhaItem := Format('Produto ID: %s | Quantidade: %s | Valor Unitário: R$ %s',
+          [ItensArray.Items[i].GetValue<string>('ProdutoID'),
+           ItensArray.Items[i].GetValue<string>('Quantidade'),
+           ItensArray.Items[i].GetValue<string>('ValorUnitario')]);
+        Texto := Texto + LinhaItem + sLineBreak;
+      end;
+
+      PastaBase := ExtractFileDir(ExtractFileDir(ExtractFileDir(ExtractFileDir(ExtractFilePath(ParamStr(0))))));
+      PastaNotas := IncludeTrailingPathDelimiter(PastaBase) + 'NotasEmitidas\';
+      ForceDirectories(PastaNotas);
+      ArquivoPath := Format('%sNota_%s.txt', [PastaNotas, ID]);
+      TFile.WriteAllText(ArquivoPath, Texto, TEncoding.UTF8);
+
+      ShowMessage('Arquivo de nota emitida salvo em: ' + ArquivoPath);
+    finally
+      if Assigned(NotaJSON) then
+        NotaJSON.Free;
+    end;
+  except
+    on E: Exception do
+      ShowMessage('Erro ao gerar arquivo da nota: ' + E.Message);
+  end;
+  if Assigned(HTTP) then
+    HTTP.Free;
+
+end;
+
+procedure TfrmFaturamento.GerarChave;
+var
+  JSON: TJSONObject;
+  HTTP: TIdHTTP;
+  Payload: TStringStream;
+  URL, Chave: string;
+  i: Integer;
+begin
+  if Trim(edtID.Text).IsEmpty then
+  begin
+    ShowMessage('ID da nota não informado.');
+    Exit;
+  end;
+
+  Chave := '';
+  for i := 1 to 44 do
+    Chave := Chave + IntToStr(Random(10));
+
+  JSON := TJSONObject.Create;
+  HTTP := TIdHTTP.Create(nil);
+  Payload := TStringStream.Create('', TEncoding.UTF8);
+  try
+     JSON.AddPair('Chave', Chave);
+     Payload.WriteString(JSON.ToJSON);
+     Payload.Position := 0;
+     HTTP.Request.ContentType := 'application/json';
+     URL := 'http://localhost:8082/nota/atualizar/chave/' + edtID.Text;
+     HTTP.Post(URL, Payload);
+  except
+    on E: EIdSocketError do
+      ShowMessage('Erro de conexão: serviço de faturamento está desligado.');
+    on E: Exception do
+      ShowMessage('Erro ao atualizar nota: ' + E.Message);
+  end;
+
+  if Assigned(JSON) then
+    JSON.Free;
+
+  if Assigned(HTTP) then
+    HTTP.Free;
+
+  if Assigned(Payload) then
+    Payload.Free;
+
+end;
+
+procedure TfrmFaturamento.grdItemNotaDblClick(Sender: TObject);
+begin
+  if lblStatusValor.Caption = 'FECHADA' then
+  begin
+    ShowMessage('Nota fiscal fechada, não há possibilidade de editar o item');
+    Exit;
+  end;
+
+  if Trim(edtID.Text).ToInteger = 0 then
+    btnGravarClick(self);
+
+  PreencherCmbProduto;
+  PreencherGbCadastrarItem;
+  gbCadastrarItem .Visible := True;
+end;
+
+procedure TfrmFaturamento.grdPesquisaDblClick(Sender: TObject);
+begin
+  if not cdsPesquisa.IsEmpty then
+    PreencherDados;
+end;
+
+procedure TfrmFaturamento.ImprimirNotaFiscal(const ID: string);
+var
+  HTTP: TIdHTTP;
+  Payload: TStringStream;
+  JSON: TJSONObject;
+begin
+  Payload := nil;
+  HTTP := TIdHTTP.Create(nil);
+  JSON := TJSONObject.Create;
+  try
+    GerarChave;
+
+    JSON.AddPair('NotaID', ID);
+    Payload := TStringStream.Create(JSON.ToJSON, TEncoding.UTF8);
+    HTTP.Request.ContentType := 'application/json';
+
+    try
+      HTTP.Post('http://localhost:8082/nota/imprimir', Payload);
+      lblStatusValor.Caption := 'FECHADA';
+      lblStatusValor.Font.Color := clRed;
+      gerarArquivo(ID);
+    except
+      on E: EIdHTTPProtocolException do
+      begin
+        if E.ErrorCode = 409 then
+          ShowMessage('Erro: ' + E.ErrorMessage)
+      end;
+      on E: EIdSocketError do
+        ShowMessage('Erro de conexão: serviço de faturamento está desligado.');
+      on E: Exception do
+        ShowMessage('Erro ao imprimir nota: ' + E.Message);
+    end;
+
+  finally
+    JSON.Free;
+    HTTP.Free;
+    if Assigned(Payload) then
+      Payload.Free;
+
+  end;
+end;
+
+procedure TfrmFaturamento.Limpar;
+begin
+  edtID.Text := '0';
+  edtCNPJ.Clear;
+  edtRazao.Clear;
+  edtDocumento.Clear;
+  edtDestinatario.Clear;
+  lblValorTotalValor.Caption := 'R$ 0,00 ';
+  lblStatusValor.Caption := 'ABERTA';
+  lblStatusValor.Font.Color := clGreen;
+  lblProdutoID.Caption := '';
+  cmbProduto.Clear;
+  edtPreco.Clear;
+  edtQtde.Clear;
+  cdsItensNota.EmptyDataSet;
+
+end;
+
+procedure TfrmFaturamento.PesquisarNotaID(const ID: string);
+var
+  HTTP: TIdHTTP;
+  Resp: string;
+  Obj: TJSONObject;
+begin
+  cdsPesquisa.Close;
+  cdsPesquisa.CreateDataSet;
+
+  HTTP := TIdHTTP.Create(nil);
+  try
+    try
+      Resp := HTTP.Get('http://localhost:8082/nota/' + ID);
+
+
+
+      Obj := TJSONObject.ParseJSONValue(Resp) as TJSONObject;
+      if not Assigned(Obj) then Exit;
+
+      cdsPesquisa.Append;
+      cdsPesquisa.FieldByName('ID').AsString := Obj.GetValue<string>('ID');
+      cdsPesquisa.FieldByName('Chave').AsString := Obj.GetValue<string>('Chave');
+      cdsPesquisa.FieldByName('CNPJEMISSOR').AsString := Obj.GetValue<string>('CNPJ_EMISSOR');
+      cdsPesquisa.FieldByName('RAZAOEMISSOR').AsString := Obj.GetValue<string>('RAZAO_EMISSOR');
+      cdsPesquisa.FieldByName('DOCUMENTODEST').AsString := Obj.GetValue<string>('DOCUMENTO_DEST');
+      cdsPesquisa.FieldByName('NOMEDEST').AsString := Obj.GetValue<string>('NOME_DEST');
+      cdsPesquisa.FieldByName('STATUS').AsString := Obj.GetValue<string>('Status');
+      cdsPesquisa.FieldByName('VALORTOTAL').AsString := Obj.GetValue<string>('ValorTotal');
+      cdsPesquisa.Post;
+
+      Obj.Free;
+     except
+      on E: EIdSocketError do
+        ShowMessage('Erro de conexão: serviço de faturamento está desligado.');
+
+      on E: Exception do
+        ShowMessage('Erro ao buscar a nota: ' + E.Message);
+
+    end;
+  finally
+    if Assigned(HTTP) then
+      HTTP.Free;
+
+  end;
+end;
+
+procedure TfrmFaturamento.PesquisarNotas;
+var
+  HTTP: TIdHTTP;
+  Resp: string;
+  JSONArray: TJSONArray;
+  Obj: TJSONObject;
+  i: Integer;
+begin
+  cdsPesquisa.Close;
+  cdsPesquisa.CreateDataSet;
+
+  HTTP := TIdHTTP.Create(nil);
+  try
+    try
+      try
+        Resp := HTTP.Get('http://localhost:8082/nota');
+      except
+        on E: EIdSocketError do
+          ShowMessage('Erro de conexão: serviço de faturamento está desligado.');
+        on E: Exception do
+          ShowMessage('Erro ao atualizar nota: ' + E.Message);
+      end;
+
+      JSONArray := TJSONObject.ParseJSONValue(Resp) as TJSONArray;
+      if not Assigned(JSONArray) then Exit;
+
+      for i := 0 to JSONArray.Count - 1 do
+      begin
+        Obj := JSONArray.Items[i] as TJSONObject;
+        cdsPesquisa.Append;
+        cdsPesquisa.FieldByName('ID').AsString := Obj.GetValue<string>('ID');
+        cdsPesquisa.FieldByName('Chave').AsString := Obj.GetValue<string>('Chave');
+        cdsPesquisa.FieldByName('CNPJEMISSOR').AsString := Obj.GetValue<string>('CNPJ_EMISSOR');
+        cdsPesquisa.FieldByName('RAZAOEMISSOR').AsString := Obj.GetValue<string>('RAZAO_EMISSOR');
+        cdsPesquisa.FieldByName('DOCUMENTODEST').AsString := Obj.GetValue<string>('DOCUMENTO_DEST');
+        cdsPesquisa.FieldByName('NOMEDEST').AsString := Obj.GetValue<string>('NOME_DEST');
+        cdsPesquisa.FieldByName('STATUS').AsString := Obj.GetValue<string>('Status');
+        cdsPesquisa.FieldByName('VALORTOTAL').AsString := Obj.GetValue<string>('ValorTotal');
+        cdsPesquisa.Post;
+      end;
+
+      JSONArray.Free;
+    except
+      on E: Exception do
+        ShowMessage('Erro ao buscar notas: ' + E.Message);
+    end;
+  finally
+    if Assigned(HTTP) then
+      HTTP.Free;
+
+  end;
+end;
+
+procedure TfrmFaturamento.PreencherCmbProduto;
+var
+  HTTP: TIdHTTP;
+  Resp: string;
+  JSONArray: TJSONArray;
+  Obj: TJSONObject;
+  i, ID: Integer;
+  Nome: string;
+  Preco: Double;
+begin
+  HTTP := nil;
+  JSONArray := nil;
+  cmbProduto.Items.Clear;
+  PrecosProdutos.Clear;
+  try
+    HTTP := TIdHTTP.Create(nil);
+    try
+      HTTP.Request.ContentType := 'application/json';
+      Resp := HTTP.Get('http://localhost:8081/produto');
+    except
+      on E: EIdSocketError do
+        ShowMessage('Erro de conexão: serviço de faturamento está desligado.');
+      on E: Exception do
+        ShowMessage('Erro ao buscar os procdutos: ' + E.Message);
+    end;
+
+    JSONArray := TJSONObject.ParseJSONValue(Resp) as TJSONArray;
+    if not Assigned(JSONArray) then Exit;
+
+    for i := 0 to JSONArray.Count - 1 do
+    begin
+      Obj := JSONArray.Items[i] as TJSONObject;
+      ID := Obj.GetValue<Integer>('ID');
+      Nome := Obj.GetValue<string>('Nome');
+      Preco := StrToFloat(StringReplace(Obj.GetValue<string>('Preco'), '.', FormatSettings.DecimalSeparator, [rfReplaceAll]));
+
+      cmbProduto.Items.AddObject(Nome, TObject(ID));
+      PrecosProdutos.AddOrSetValue(ID, Preco);
+    end;
+
+  except
+    on E: EIdSocketError do
+      ShowMessage('Erro de conexão: o serviço de estoque está desligado.');
+    on E: Exception do
+      ShowMessage('Erro ao carregar produtos: ' + E.Message);
+  end;
+
+  if Assigned(HTTP) then
+    HTTP.Free;
+
+  if Assigned(JSONArray) then
+    JSONArray.Free;
+
+end;
+
+procedure TfrmFaturamento.PreencherDados;
+begin
+  edtID.Text := cdsPesquisa.FieldByName('ID').AsString;
+  edtCNPJ.Text := cdsPesquisa.FieldByName('CNPJEMISSOR').AsString;
+  edtRazao.Text := cdsPesquisa.FieldByName('RAZAOEMISSOR').AsString;
+  edtDocumento.Text := cdsPesquisa.FieldByName('DOCUMENTODEST').AsString;
+  edtDestinatario.Text := cdsPesquisa.FieldByName('NOMEDEST').AsString;
+  lblValorTotalValor.Caption := 'R$ ' + FormatFloat('0.00', cdsPesquisa.FieldByName('VALORTOTAL').AsFloat);
+  if cdsPesquisa.FieldByName('STATUS').AsString = 'aberta' then
+  begin
+    lblStatusValor.Caption := 'ABERTA';
+    lblStatusValor.Font.Color := clGreen;
+  end
+  else
+  begin
+    lblStatusValor.Caption := 'FECHADA';
+    lblStatusValor.Font.Color := clRed;
+  end;
+
+  PreencherItensNota(cdsPesquisa.FieldByName('ID').AsInteger);
+  pcFaturamento.ActivePage := tsCadastro;
+end;
+
+procedure TfrmFaturamento.PreencherGbCadastrarItem;
+var
+  i, ProdutoID: Integer;
+begin
+  ProdutoID := cdsItensNota.FieldByName('ProdutoID').AsInteger;
+
+  for i := 0 to cmbProduto.Items.Count - 1 do
+  begin
+    if Integer(cmbProduto.Items.Objects[i]) = ProdutoID then
+    begin
+      cmbProduto.ItemIndex := i;
+      Break;
+    end;
+  end;
+  lblProdutoID.Caption := cdsItensNota.FieldByName('ID').AsString;
+  edtPreco.Text := FormatFloat('0.00', cdsItensNota.FieldByName('VALOR').AsFloat);
+  edtQtde.Text := cdsItensNota.FieldByName('QUANTIDADE').AsString;
+end;
+
+procedure TfrmFaturamento.PreencherItensNota(NotaID: Integer);
+var
+  HTTP: TIdHTTP;
+  JSONResponse: string;
+  JSONArray: TJSONArray;
+  JSONItem: TJSONObject;
+  i: Integer;
+begin
+  JSONArray := nil;
+  HTTP := TIdHTTP.Create(nil);
+  try
+    try
+      HTTP := TIdHTTP.Create(nil);
+    try
+      JSONResponse := HTTP.Get(Format('http://localhost:8082/nota/itens/%d', [NotaID]));
+    except
+      on E: EIdSocketError do
+        ShowMessage('Erro de conexão: serviço de faturamento está desligado.');
+      on E: Exception do
+        ShowMessage('Erro ao atualizar nota: ' + E.Message);
+    end;
+
+      JSONArray := TJSONObject.ParseJSONValue(JSONResponse) as TJSONArray;
+      cdsItensNota.DisableControls;
+      try
+        if not cdsItensNota.Active then
+          cdsItensNota.CreateDataSet;
+
+        cdsItensNota.EmptyDataSet;
+        for i := 0 to JSONArray.Count - 1 do
+        begin
+          JSONItem := JSONArray.Items[i] as TJSONObject;
+          cdsItensNota.Append;
+          cdsItensNota.FieldByName('ID').AsInteger := JSONItem.GetValue<Integer>('ID');
+          cdsItensNota.FieldByName('ProdutoID').AsInteger := JSONItem.GetValue<Integer>('ProdutoID');
+          cdsItensNota.FieldByName('NOME').AsString := JSONItem.GetValue<string>('Nome');
+          cdsItensNota.FieldByName('QUANTIDADE').AsInteger := JSONItem.GetValue<Integer>('Quantidade');
+          cdsItensNota.FieldByName('VALOR').AsFloat := StrToFloat(StringReplace(JSONItem.GetValue<string>('ValorUnitario'), '.', FormatSettings.DecimalSeparator, [rfReplaceAll]));
+
+          cdsItensNota.Post;
+        end;
+      finally
+        cdsItensNota.EnableControls;
+      end;
+    except
+      on E: Exception do
+        ShowMessage('Erro ao obter itens da nota: ' + E.Message);
+    end;
+  finally
+    if Assigned(HTTP) then
+      HTTP.Free;
+
+    if Assigned(JSONArray) then
+      JSONArray.Free;
+
+  end;
+end;
+
+function TfrmFaturamento.ValidarDados: Boolean;
+begin
+  Result := False;
+
+  if Trim(edtRazao.Text).IsEmpty then
+  begin
+    ShowMessage('Informe a Razão Social.');
+    Exit;
+  end;
+
+  if Trim(edtCNPJ.Text).IsEmpty then
+  begin
+    ShowMessage('Informe o CNPJ.');
+    Exit;
+  end;
+
+  if Trim(edtDestinatario.Text).IsEmpty then
+  begin
+    ShowMessage('Informe o Nome do Destinatário.');
+    Exit;
+  end;
+
+  if Trim(edtDocumento.Text).IsEmpty then
+  begin
+    ShowMessage('Informe o Documento do Destinatário.');
+    Exit;
+  end;
+
+  if gbCadastrarItem.Visible then
+  begin
+    if cmbProduto.ItemIndex = -1 then
+    begin
+      ShowMessage('Selecione um produto que será adicionado.');
+      Exit;
+    end;
+
+    if Trim(edtQtde.Text).IsEmpty then
+    begin
+      ShowMessage('Informe a Quantidade do produto que será adicionada.');
+      Exit;
+    end;
+
+  end;
+
+  Result := True;
+end;
+
+end.

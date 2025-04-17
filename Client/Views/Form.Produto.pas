@@ -1,0 +1,481 @@
+unit Form.Produto;
+
+interface
+
+{$REGION 'Uses'}
+uses
+  Winapi.Windows,
+  Winapi.Messages,
+  System.SysUtils,
+  System.Variants,
+  System.Classes,
+  Vcl.Graphics,
+  Vcl.Controls,
+  Vcl.Forms,
+  Vcl.Dialogs,
+  Vcl.ComCtrls,
+  Data.DB,
+  Vcl.Buttons,
+  Vcl.Grids,
+  Vcl.DBGrids,
+  Vcl.ExtCtrls,
+  Vcl.StdCtrls,
+  Vcl.Mask,
+  Datasnap.DBClient,
+  IdBaseComponent,
+  IdComponent,
+  IdTCPConnection,
+  IdTCPClient,
+  JSON,
+  IdHTTP,
+  IdException,
+  IdSocketHandle,
+  IdStack,
+  System.Generics.Collections;
+{$ENDREGION}
+
+type
+  TfrmProduto = class(TForm)
+    pcProduto: TPageControl;
+    tsPesquisa: TTabSheet;
+    tsCadastro: TTabSheet;
+    pnlPesquisa: TPanel;
+    grdPesquisa: TDBGrid;
+    btnPesquisa: TSpeedButton;
+    pnlManipularDados: TPanel;
+    btnCancelar: TSpeedButton;
+    btnGravar: TSpeedButton;
+    btnExcluir: TSpeedButton;
+    pnlCadastro: TPanel;
+    lblPEan: TLabel;
+    edtPEAN: TMaskEdit;
+    lblID: TLabel;
+    edtID: TMaskEdit;
+    Label2: TLabel;
+    Label3: TLabel;
+    edtEAN: TMaskEdit;
+    edtDescricao: TMaskEdit;
+    lblDescricao: TLabel;
+    edtPreco: TMaskEdit;
+    lblPreco: TLabel;
+    lblCusto: TLabel;
+    edtCusto: TMaskEdit;
+    edtSaldo: TMaskEdit;
+    lblSaldo: TLabel;
+    cdsPesquisa: TClientDataSet;
+    dsPesquisa: TDataSource;
+    cdsPesquisaID: TIntegerField;
+    cdsPesquisaEAN: TStringField;
+    cdsPesquisaNOME: TStringField;
+    cdsPesquisaCUSTO: TFloatField;
+    cdsPesquisaPRECO: TFloatField;
+    cdsPesquisaSALDO: TIntegerField;
+    IdHTTP: TIdHTTP;
+    procedure btnPesquisaClick(Sender: TObject);
+    procedure FormClose(Sender: TObject; var Action: TCloseAction);
+    procedure btnGravarClick(Sender: TObject);
+    procedure FormCreate(Sender: TObject);
+    procedure grdPesquisaDblClick(Sender: TObject);
+    procedure btnCancelarClick(Sender: TObject);
+    procedure btnExcluirClick(Sender: TObject);
+  private
+    procedure PesquisarProduto;
+    procedure PesquisarProdutoEAN(const AEAN: string);
+    procedure Cadastrarproduto;
+    procedure PreencherDados;
+    procedure Limpar;
+    procedure AtualizarProduto;
+    procedure ExcluirProduto;
+    function ValidarDados: Boolean;
+  public
+  end;
+
+var
+  frmProduto: TfrmProduto;
+
+implementation
+
+{$R *.dfm}
+
+procedure TfrmProduto.AtualizarProduto;
+var
+  JSON: TJSONObject;
+  HTTP: TIdHTTP;
+  Payload: TStringStream;
+  URL: string;
+begin
+  JSON := nil;
+  HTTP := nil;
+  Payload := nil;
+
+  try
+    if Trim(edtID.Text).IsEmpty then
+    begin
+      ShowMessage('ID do produto não informado.');
+      Exit;
+    end;
+
+    JSON := TJSONObject.Create;
+    HTTP := TIdHTTP.Create(nil);
+    JSON.AddPair('EAN', edtEAN.Text);
+    JSON.AddPair('Nome', edtDescricao.Text);
+    JSON.AddPair('Saldo', edtSaldo.Text);
+    JSON.AddPair('Custo', StringReplace(edtCusto.Text, ',', '.', [rfReplaceAll]));
+    JSON.AddPair('Preco', StringReplace(edtPreco.Text, ',', '.', [rfReplaceAll]));
+
+    Payload := TStringStream.Create(JSON.ToJSON, TEncoding.UTF8);
+    HTTP.Request.ContentType := 'application/json';
+
+    URL := 'http://localhost:8081/produto/' + Trim(edtID.Text);
+
+    try
+      HTTP.Post(URL, Payload);
+    except
+      on E: EIdSocketError do
+        ShowMessage('Erro de conexão: o serviço de estoque está desligado.');
+      on E: Exception do
+        ShowMessage('Erro ao atualizar o produto: ' + E.Message);
+    end;
+
+    ShowMessage('Produto atualizado com sucesso!');
+  finally
+    if Assigned(JSON) then
+      JSON.Free;
+
+    if Assigned(HTTP) then
+      HTTP.Free;
+
+    if Assigned(Payload) then
+      Payload.Free;
+
+  end;
+end;
+
+procedure TfrmProduto.btnCancelarClick(Sender: TObject);
+begin
+  limpar;
+end;
+
+procedure TfrmProduto.btnExcluirClick(Sender: TObject);
+begin
+  if MessageBox(Handle, 'Tem certeza que deseja excluir este produto?', 'Confirmação',
+    MB_YESNO or MB_ICONQUESTION or MB_DEFBUTTON2) = IDYES then
+  begin
+    ExcluirProduto;
+  end;
+end;
+
+procedure TfrmProduto.btnGravarClick(Sender: TObject);
+begin
+  if not ValidarDados then
+    Exit;
+
+  if Trim(edtID.Text).toInteger > 0 then
+    AtualizarProduto
+  else
+    Cadastrarproduto;
+
+  PesquisarProduto;
+end;
+
+procedure TfrmProduto.btnPesquisaClick(Sender: TObject);
+begin
+  if not Trim(edtPEAN.Text).IsEmpty then
+    PesquisarProdutoEAN(Trim(edtPEAN.Text))
+  else
+    PesquisarProduto;
+end;
+
+procedure TfrmProduto.Cadastrarproduto;
+var
+  JSON, Obj: TJSONObject;
+  HTTP: TIdHTTP;
+  Payload: TStringStream;
+  Resp: string;
+begin
+  JSON := nil;
+  HTTP := nil;
+  Payload := nil;
+  Obj := nil;
+
+  try
+    JSON := TJSONObject.Create;
+    HTTP := TIdHTTP.Create(nil);
+
+    JSON.AddPair('EAN', edtEAN.Text);
+    JSON.AddPair('Nome', edtDescricao.Text);
+    JSON.AddPair('Saldo', edtSaldo.Text);
+    JSON.AddPair('Custo', StringReplace(edtCusto.Text, ',', '.', [rfReplaceAll]));
+    JSON.AddPair('Preco', StringReplace(edtPreco.Text, ',', '.', [rfReplaceAll]));
+
+    Payload := TStringStream.Create(JSON.ToJSON, TEncoding.UTF8);
+    HTTP.Request.ContentType := 'application/json';
+
+    try
+      Resp := HTTP.Post('http://localhost:8081/produto', Payload);
+
+      if Resp.Trim.StartsWith('{') then
+      begin
+        Obj := TJSONObject.ParseJSONValue(Resp) as TJSONObject;
+        if Assigned(Obj) and (Obj.GetValue('ID') <> nil) then
+          edtID.Text := Obj.GetValue<Integer>('ID').ToString;
+      end;
+
+      ShowMessage('Produto cadastrado com sucesso!');
+    except
+      on E: EIdSocketError do
+        ShowMessage('Erro de conexão: o serviço de estoque está desligado.');
+      on E: Exception do
+        ShowMessage('Erro ao cadastrar produto: ' + E.Message);
+    end;
+
+  finally
+    if Assigned(JSON) then
+      JSON.Free;
+
+    if Assigned(HTTP) then
+      HTTP.Free;
+
+    if Assigned(Payload) then
+      Payload.Free;
+
+    if Assigned(Obj) then
+      Obj.Free;
+
+  end;
+end;
+
+procedure TfrmProduto.ExcluirProduto;
+var
+  HTTP: TIdHTTP;
+  Payload: TStringStream;
+  URL: string;
+begin
+  HTTP := nil;
+  Payload := nil;
+  if Trim(edtID.Text).IsEmpty then
+  begin
+    ShowMessage('Selecione um produto para excluir.');
+    Exit;
+  end;
+
+  try
+    HTTP := TIdHTTP.Create(nil);
+    Payload := TStringStream.Create('{}', TEncoding.UTF8);
+
+    URL := 'http://localhost:8081/produto/delete/' + Trim(edtID.Text);
+    HTTP.Request.ContentType := 'application/json';
+
+    try
+      HTTP.Post(URL, Payload);
+      ShowMessage('Produto excluído com sucesso!');
+      Limpar;
+      PesquisarProduto;
+    except
+      on E: EIdHTTPProtocolException do
+      begin
+        if E.ErrorCode = 409 then
+          ShowMessage('Este produto está vinculado a uma nota. Exlusão não permitida. ')
+      end;
+      on E: EIdSocketError do
+        ShowMessage('Erro de conexão: o serviço de estoque está desligado.');
+      on E: Exception do
+        ShowMessage('Erro inesperado ao excluir: ' + E.Message);
+    end;
+
+  finally
+    if Assigned(HTTP) then
+      HTTP.Free;
+
+    if Assigned(Payload) then
+      Payload.Free;
+
+  end;
+end;
+
+procedure TfrmProduto.FormClose(Sender: TObject; var Action: TCloseAction);
+begin
+  Action := caFree;
+end;
+
+procedure TfrmProduto.FormCreate(Sender: TObject);
+begin
+  pcProduto.ActivePage := tsPesquisa;
+end;
+
+procedure TfrmProduto.grdPesquisaDblClick(Sender: TObject);
+begin
+  if not cdsPesquisa.IsEmpty then
+    PreencherDados;
+end;
+
+procedure TfrmProduto.Limpar;
+begin
+  edtID.Text := '0';
+  edtEAN.Clear;
+  edtDescricao.Clear;
+  edtSaldo.Clear;
+  edtCusto.Clear;
+  edtPreco.Clear;
+end;
+
+procedure TfrmProduto.PesquisarProduto;
+var
+  HTTP: TIdHTTP;
+  Resp: string;
+  JSONArray: TJSONArray;
+  Obj: TJSONObject;
+  i: Integer;
+begin
+  HTTP := nil;
+  try
+    try
+      HTTP := TIdHTTP.Create(nil);
+      HTTP.Request.ContentType := 'application/json';
+      Resp := HTTP.Get('http://localhost:8081/produto');
+
+      JSONArray := TJSONObject.ParseJSONValue(Resp) as TJSONArray;
+      if not Assigned(JSONArray) then Exit;
+
+      cdsPesquisa.Close;
+      cdsPesquisa.CreateDataSet;
+
+      for i := 0 to JSONArray.Count - 1 do
+      begin
+        Obj := JSONArray.Items[i] as TJSONObject;
+        cdsPesquisa.Append;
+        cdsPesquisa.FieldByName('ID').AsInteger    := Obj.GetValue<Integer>('ID');
+        cdsPesquisa.FieldByName('EAN').AsString   := Obj.GetValue<string>('EAN');
+        cdsPesquisa.FieldByName('Nome').AsString   := Obj.GetValue<string>('Nome');
+        cdsPesquisa.FieldByName('Saldo').AsInteger := Obj.GetValue<Integer>('Saldo');
+        cdsPesquisa.FieldByName('Custo').AsFloat :=
+        StrToFloat(StringReplace(Obj.GetValue<string>('Custo'), ',', FormatSettings.DecimalSeparator, [rfReplaceAll]));
+        cdsPesquisa.FieldByName('Preco').AsFloat :=
+        StrToFloat(StringReplace(Obj.GetValue<string>('Preco'), ',', FormatSettings.DecimalSeparator, [rfReplaceAll]));
+        cdsPesquisa.Post;
+      end;
+
+      if Assigned(JSONArray) then
+        JSONArray.Free;
+
+    except
+      on E: EIdSocketError do
+        ShowMessage('Erro de conexão: o serviço de estoque está desligado.');
+      on E: Exception do
+        ShowMessage('Erro ao pesquisar produtos: ' + E.Message);
+    end;
+  finally
+    if Assigned(HTTP) then
+       HTTP.Free;
+
+  end;
+end;
+
+procedure TfrmProduto.PesquisarProdutoEAN(const AEAN: string);
+var
+  HTTP: TIdHTTP;
+  Resp: string;
+  JSONArray: TJSONArray;
+  Obj: TJSONObject;
+  i: Integer;
+begin
+  HTTP := nil;
+  JSONArray := nil;
+  try
+    try
+      HTTP := TIdHTTP.Create(nil);
+      HTTP.Request.ContentType := 'application/json';
+      Resp := HTTP.Get('http://localhost:8081/produto/' + AEAN);
+
+
+      JSONArray := TJSONObject.ParseJSONValue(Resp) as TJSONArray;
+      if not Assigned(JSONArray) then Exit;
+
+      cdsPesquisa.Close;
+      cdsPesquisa.CreateDataSet;
+
+      for i := 0 to JSONArray.Count - 1 do
+      begin
+        Obj := JSONArray.Items[i] as TJSONObject;
+        cdsPesquisa.Append;
+        cdsPesquisa.FieldByName('ID').AsInteger    := Obj.GetValue<Integer>('ID');
+        cdsPesquisa.FieldByName('EAN').AsString    := Obj.GetValue<string>('EAN');
+        cdsPesquisa.FieldByName('Nome').AsString   := Obj.GetValue<string>('Nome');
+        cdsPesquisa.FieldByName('Saldo').AsInteger := Obj.GetValue<Integer>('Saldo');
+        cdsPesquisa.FieldByName('Custo').AsFloat   :=
+          StrToFloat(StringReplace(Obj.GetValue<string>('Custo'), ',', FormatSettings.DecimalSeparator, [rfReplaceAll]));
+        cdsPesquisa.FieldByName('Preco').AsFloat   :=
+          StrToFloat(StringReplace(Obj.GetValue<string>('Preco'), ',', FormatSettings.DecimalSeparator, [rfReplaceAll]));
+        cdsPesquisa.Post;
+      end;
+
+    except
+      on E: EIdSocketError do
+          ShowMessage('Erro de conexão: o serviço de estoque está desligado.');
+      on E: Exception do
+        ShowMessage('Erro ao buscar produtos por EAN: ' + E.Message);
+    end;
+  finally
+    if Assigned(HTTP) then
+      HTTP.Free;
+
+    if Assigned(JSONArray) then
+      JSONArray.Free;
+
+  end;
+end;
+
+procedure TfrmProduto.PreencherDados;
+begin
+  edtID.Text        := cdsPesquisa.FieldByName('ID').AsString;
+  edtEAN.Text       := cdsPesquisa.FieldByName('EAN').AsString;
+  edtDescricao.Text := cdsPesquisa.FieldByName('Nome').AsString;
+  edtSaldo.Text     := cdsPesquisa.FieldByName('Saldo').AsString;
+  edtCusto.Text     := FormatFloat('0.00', cdsPesquisa.FieldByName('Custo').AsFloat);
+  edtPreco.Text     := FormatFloat('0.00', cdsPesquisa.FieldByName('Preco').AsFloat);
+  pcProduto.ActivePage := tsCadastro;
+end;
+
+function TfrmProduto.ValidarDados: Boolean;
+begin
+  Result := False;
+
+  if Trim(edtEAN.Text).IsEmpty then
+  begin
+    ShowMessage('Informe o EAN do produto.');
+    edtEAN.SetFocus;
+    Exit;
+  end;
+
+  if Trim(edtDescricao.Text).IsEmpty then
+  begin
+    ShowMessage('Informe o nome do produto.');
+    edtDescricao.SetFocus;
+    Exit;
+  end;
+
+  if Trim(edtCusto.Text).IsEmpty then
+  begin
+    ShowMessage('Informe o custo do produto.');
+    edtCusto.SetFocus;
+    Exit;
+  end;
+
+  if Trim(edtPreco.Text).IsEmpty then
+  begin
+    ShowMessage('Informe o preço do produto.');
+    edtPreco.SetFocus;
+    Exit;
+  end;
+
+  if Trim(edtSaldo.Text).IsEmpty then
+  begin
+    ShowMessage('Informe o saldo do produto.');
+    edtSaldo.SetFocus;
+    Exit;
+  end;
+
+  Result := True;
+end;
+
+end.

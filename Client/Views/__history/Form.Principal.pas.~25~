@@ -1,0 +1,63 @@
+unit Form.Principal;
+
+interface
+
+{$REGION 'Uses'}
+uses
+  Winapi.Windows,
+  Winapi.Messages,
+  System.SysUtils,
+  System.Variants,
+  System.Classes,
+  Vcl.Graphics,
+  Vcl.Controls,
+  Vcl.Forms,
+  Vcl.Dialogs,
+  Vcl.ExtCtrls,
+  Vcl.Buttons,
+  System.ImageList,
+  Vcl.ImgList,
+  Vcl.Imaging.pngimage,
+  Form.Produto,
+  Form.Faturamento;
+{$ENDREGION}
+
+type
+  TfrmPrincipal = class(TForm)
+    plnMenu: TPanel;
+    btnFaturamento: TSpeedButton;
+    btnProduto: TSpeedButton;
+    pnlPrincipal: TPanel;
+    Image1: TImage;
+    procedure btnProdutoClick(Sender: TObject);
+    procedure btnFaturamentoClick(Sender: TObject);
+    procedure FormCreate(Sender: TObject);
+  private
+  public
+  end;
+
+var
+  frmPrincipal: TfrmPrincipal;
+
+implementation
+
+{$R *.dfm}
+
+procedure TfrmPrincipal.btnFaturamentoClick(Sender: TObject);
+begin
+  TFrmFaturamento.Create(Self).ShowModal;
+end;
+
+procedure TfrmPrincipal.btnProdutoClick(Sender: TObject);
+begin
+  TFrmProduto.Create(Self).ShowModal;
+end;
+
+procedure TfrmPrincipal.FormCreate(Sender: TObject);
+begin
+  SetThreadLocale($0416);
+  Application.UpdateFormatSettings := False;
+  FormatSettings := TFormatSettings.Create($0416);
+end;
+
+end.

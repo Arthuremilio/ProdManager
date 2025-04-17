@@ -1,0 +1,17 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<BorlandProject>
+	<Transactions>
+    <Transaction>2025/03/29 16:35:13.000.159,=C:\Users\arthu\Documents\Embarcadero\Studio\Projects\Unit1.pas</Transaction>
+    <Transaction>2025/03/29 16:36:14.000.445,C:\Users\arthu\Documents\Embarcadero\Studio\Projects\Unit1.dfm=C:\VIASOFT\Client\Views\frmPrincipal.dfm</Transaction>
+    <Transaction>2025/03/29 16:36:14.000.445,C:\Users\arthu\Documents\Embarcadero\Studio\Projects\Unit1.pas=C:\VIASOFT\Client\Views\frmPrincipal.pas</Transaction>
+    <Transaction>2025/03/29 16:37:31.000.737,C:\Users\arthu\Documents\Embarcadero\Studio\Projects\Project1.dproj=C:\VIASOFT\Client\VIASOFT.dproj</Transaction>
+    <Transaction>2025/03/29 21:43:44.000.412,=C:\VIASOFT\Client\Views\Form.Principal.pas</Transaction>
+    <Transaction>2025/03/29 23:16:12.000.909,=C:\VIASOFT\Client\Unit1.pas</Transaction>
+    <Transaction>2025/03/29 23:16:39.000.078,C:\VIASOFT\Client\Unit1.dfm=C:\VIASOFT\Client\Views\Form.Produto.dfm</Transaction>
+    <Transaction>2025/03/29 23:16:39.000.078,C:\VIASOFT\Client\Unit1.pas=C:\VIASOFT\Client\Views\Form.Produto.pas</Transaction>
+    <Transaction>2025/03/29 23:17:59.000.551,=C:\VIASOFT\Client\Unit1.pas</Transaction>
+    <Transaction>2025/03/29 23:18:44.000.884,C:\VIASOFT\Client\Unit1.dfm=C:\VIASOFT\Client\Views\Form.Faturamento.dfm</Transaction>
+    <Transaction>2025/03/29 23:18:44.000.884,C:\VIASOFT\Client\Unit1.pas=C:\VIASOFT\Client\Views\Form.Faturamento.pas</Transaction>
+    <Transaction>2025/04/17 13:36:38.899,C:\VIASOFT\Client\Client.dproj=C:\VIASOFT\Client\VIASOFT.dproj</Transaction>
+  </Transactions>
+</BorlandProject>
