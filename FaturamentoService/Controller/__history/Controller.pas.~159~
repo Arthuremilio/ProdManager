@@ -1,0 +1,941 @@
+unit Controller;
+
+interface
+
+{$REGION 'Uses'}
+uses
+  Winapi.Windows,
+  Winapi.Messages,
+  System.SysUtils,
+  System.Classes,
+  Vcl.SvcMgr,
+  IdBaseComponent,
+  IdComponent,
+  IdCustomTCPServer,
+  IdCustomHTTPServer,
+  IdHTTPServer,
+  IdContext,
+  IdHTTPHeaderInfo,
+  System.JSON,
+  Data.DB,
+  FireDAC.Comp.Client,
+  FireDAC.Stan.Def,
+  FireDAC.Stan.Async,
+  FireDAC.Phys.SQLite,
+  FireDAC.DApt,
+  FireDAC.UI.Intf,
+  FireDAC.VCLUI.Wait,
+  System.JSON.Readers,
+  System.JSON.Types,
+  FireDAC.Stan.Intf,
+  FireDAC.Stan.Option,
+  FireDAC.Stan.Error,
+  FireDAC.Phys.Intf,
+  FireDAC.Stan.Pool,
+  FireDAC.Phys,
+  FireDAC.Phys.SQLiteDef,
+  FireDAC.Stan.ExprFuncs,
+  FireDAC.Phys.SQLiteWrapper.Stat,
+  System.IOUtils,
+  FireDAC.Stan.Param,
+  IdHTTP,
+  FireDAC.Phys.FBDef,
+  FireDAC.Phys.IBBase,
+  FireDAC.Phys.FB;
+{$ENDREGION}
+
+type
+  TFaturamentoController = class(TService)
+    FDConnection: TFDConnection;
+    IdHTTPServer: TIdHTTPServer;
+    FDPhysFBDriverLink: TFDPhysFBDriverLink;
+    procedure ServiceCreate(Sender: TObject);
+    procedure ServiceStart(Sender: TService; var Started: Boolean);
+    procedure ServiceStop(Sender: TService; var Stopped: Boolean);
+    procedure IdHTTPServerCommandGet(AContext: TIdContext;
+      ARequestInfo: TIdHTTPRequestInfo; AResponseInfo: TIdHTTPResponseInfo);
+  private
+    procedure PostNota(ARequestInfo: TIdHTTPRequestInfo; AResponseInfo: TIdHTTPResponseInfo);
+    procedure PostItemNota(ARequestInfo: TIdHTTPRequestInfo; AResponseInfo: TIdHTTPResponseInfo);
+    procedure GetNotaID(ARequestInfo: TIdHTTPRequestInfo; AResponseInfo: TIdHTTPResponseInfo);
+    procedure PostImprimirNota(ARequestInfo: TIdHTTPRequestInfo; AResponseInfo: TIdHTTPResponseInfo);
+    procedure GetNota(ARequestInfo: TIdHTTPRequestInfo; AResponseInfo: TIdHTTPResponseInfo);
+    procedure PostAtualizarNota(ARequestInfo: TIdHTTPRequestInfo; AResponseInfo: TIdHTTPResponseInfo);
+    procedure GetItensNota(ARequestInfo: TIdHTTPRequestInfo; AResponseInfo: TIdHTTPResponseInfo);
+    procedure PutItemNota(ARequestInfo: TIdHTTPRequestInfo; AResponseInfo: TIdHTTPResponseInfo);
+    procedure PostDeletarItemNota(ARequestInfo: TIdHTTPRequestInfo; AResponseInfo: TIdHTTPResponseInfo);
+    procedure PostDeletarNota(ARequestInfo: TIdHTTPRequestInfo; AResponseInfo: TIdHTTPResponseInfo);
+    procedure PostAtualizarNotaChave(ARequestInfo: TIdHTTPRequestInfo; AResponseInfo: TIdHTTPResponseInfo);
+    procedure PostAtualizarNotaValor(ARequestInfo: TIdHTTPRequestInfo; AResponseInfo: TIdHTTPResponseInfo);
+    procedure GravarLog(const Mensagem: string);
+var
+  public
+    function GetServiceController: TServiceController; override;
+  end;
+
+var
+  FaturamentoController: TFaturamentoController;
+
+implementation
+
+{$R *.dfm}
+
+procedure ServiceController(CtrlCode: DWord); stdcall;
+begin
+  FaturamentoController.Controller(CtrlCode);
+end;
+
+function TFaturamentoController.GetServiceController: TServiceController;
+begin
+  Result := ServiceController;
+end;
+
+procedure TFaturamentoController.GravarLog(const Mensagem: string);
+var
+  PastaBase, PastaLog, CaminhoLog: string;
+begin
+    PastaBase := ExtractFileDir(ExtractFileDir(ExtractFileDir(ExtractFileDir(ExtractFilePath(ParamStr(0))))));
+    PastaLog := IncludeTrailingPathDelimiter(PastaBase) + 'LOG\';
+    ForceDirectories(PastaLog);
+
+    CaminhoLog := PastaLog + 'FaturamentoServiceLog.txt';
+    TFile.AppendAllText(CaminhoLog, Mensagem + sLineBreak, TEncoding.UTF8);
+end;
+
+procedure TFaturamentoController.ServiceCreate(Sender: TObject);
+begin
+  try
+    FDConnection.Params.DriverID := 'FB';
+    FDConnection.Params.Database := 'C:\VIASOFT\Data\BANCO.FDB';
+    FDConnection.Params.UserName := 'SYSDBA';
+    FDConnection.Params.Password := 'masterkey';
+    FDConnection.LoginPrompt := False;
+    FDConnection.Connected := True;
+    GravarLog('ServiceCreate executado com sucesso');
+  except
+    on E: Exception do
+      GravarLog('ERRO ServiceCreate: ' + E.Message);
+  end;
+end;
+
+procedure TFaturamentoController.ServiceStart(Sender: TService; var Started: Boolean);
+begin
+  try
+    IdHTTPServer.DefaultPort := 8082;
+    IdHTTPServer.Active := True;
+    Started := True;
+    GravarLog('ServiceStart executado com sucesso');
+  except
+    on E: Exception do
+    begin
+      GravarLog('ERRO ServiceStart');
+      Started := False;
+    end;
+  end;
+end;
+
+procedure TFaturamentoController.ServiceStop(Sender: TService; var Stopped: Boolean);
+begin
+  IdHTTPServer.Active := False;
+  Stopped := True;
+end;
+
+procedure TFaturamentoController.IdHTTPServerCommandGet(AContext: TIdContext;ARequestInfo: TIdHTTPRequestInfo; AResponseInfo: TIdHTTPResponseInfo);
+var
+  Path, Metodo: string;
+begin
+  Path := ARequestInfo.Document.ToLower.Trim(['/']);
+  Metodo := ARequestInfo.Command.ToUpper;
+  GravarLog('>> ' + Metodo + ' - ' + Path);
+
+  if Path.StartsWith('nota/itens/') and (Metodo = 'GET') then
+    GetItensNota(ARequestInfo, AResponseInfo)
+  else if Path.StartsWith('nota/') and (Metodo = 'GET') then
+    GetNotaID(ARequestInfo, AResponseInfo)
+  else if (Path = 'nota') and (Metodo = 'GET') then
+    GetNota(ARequestInfo, AResponseInfo)
+  else if (Path = 'nota') and (Metodo = 'POST') then
+    PostNota(ARequestInfo, AResponseInfo)
+  else if (Path = 'nota/item') and (Metodo = 'POST') then
+    PostItemNota(ARequestInfo, AResponseInfo)
+  else if (Path = 'nota/imprimir') and (Metodo = 'POST') then
+    PostImprimirNota(ARequestInfo, AResponseInfo)
+  else if Path.StartsWith('nota/item/atualizar/') and (Metodo = 'POST') then
+    PutItemNota(ARequestInfo, AResponseInfo)
+  else if Path.StartsWith('nota/item/deletar/') and (Metodo = 'POST') then
+    PostDeletarItemNota(ARequestInfo, AResponseInfo)
+  else if Path.StartsWith('nota/deletar/') and (Metodo = 'POST') then
+    PostDeletarNota(ARequestInfo, AResponseInfo)
+  else if Path.StartsWith('nota/atualizar/chave/') and (Metodo = 'POST') then
+    PostAtualizarNotaChave(ARequestInfo, AResponseInfo)
+  else if Path.StartsWith('nota/atualizar/valortotal/') and (Metodo = 'POST') then
+    PostAtualizarNotaValor(ARequestInfo, AResponseInfo)
+  else if Path.StartsWith('nota/atualizar/') and (Metodo = 'POST') then
+    PostAtualizarNota(ARequestInfo, AResponseInfo)
+  else
+  begin
+    AResponseInfo.ResponseNo := 404;
+    AResponseInfo.ContentText := 'Endpoint não encontrado';
+  end;
+end;
+
+procedure TFaturamentoController.PostNota(ARequestInfo: TIdHTTPRequestInfo; AResponseInfo: TIdHTTPResponseInfo);
+var
+  JSON: TJSONObject;
+  JSONValue: TJSONValue;
+  JSONString: TStringStream;
+  Query: TFDQuery;
+  NotaID: Integer;
+  ResponseJSON: TJSONObject;
+begin
+  JSON := nil;
+  JSONString := nil;
+  Query := nil;
+  ResponseJSON := nil;
+  try
+    try
+      JSONString := TStringStream.Create;
+      ARequestInfo.PostStream.Position := 0;
+      JSONString.CopyFrom(ARequestInfo.PostStream, ARequestInfo.PostStream.Size);
+      JSONValue := TJSONObject.ParseJSONValue(JSONString.DataString);
+      JSON := JSONValue as TJSONObject;
+
+      Query := TFDQuery.Create(nil);
+      FDConnection.StartTransaction;
+      Query.Connection := FDConnection;
+      Query.SQL.Text :=
+        'INSERT INTO NotasFiscais (Chave, CNPJ_EMISSOR, RAZAO_EMISSOR, DOCUMENTO_DEST, NOME_DEST, Status, ValorTotal) ' +
+        'VALUES (:Chave, :CNPJ, :Razao, :DocDest, :NomeDest, :Status, :ValorTotal) RETURNING ID';
+      Query.ParamByName('Chave').AsString := JSON.GetValue<string>('Chave');
+      Query.ParamByName('CNPJ').AsString := JSON.GetValue<string>('CNPJ_EMISSOR');
+      Query.ParamByName('Razao').AsString := JSON.GetValue<string>('RAZAO_EMISSOR');
+      Query.ParamByName('DocDest').AsString := JSON.GetValue<string>('DOCUMENTO_DEST');
+      Query.ParamByName('NomeDest').AsString := JSON.GetValue<string>('NOME_DEST');
+      Query.ParamByName('Status').AsString := JSON.GetValue<string>('Status');
+      Query.ParamByName('ValorTotal').AsFloat := JSON.GetValue<Double>('ValorTotal');
+      Query.Open;
+      NotaID := Query.FieldByName('ID').AsInteger;
+      FDConnection.Commit;
+
+      ResponseJSON := TJSONObject.Create;
+      ResponseJSON.AddPair('ID', TJSONNumber.Create(NotaID));
+      AResponseInfo.ContentType := 'application/json';
+      AResponseInfo.ContentText := ResponseJSON.ToJSON;
+    except
+      on E: Exception do
+      begin
+        FDConnection.Rollback;
+        AResponseInfo.ResponseNo := 500;
+        AResponseInfo.ContentText := 'Erro ao cadastrar nota fiscal';
+        GravarLog('Erro no PostNota: ' + E.Message);
+      end;
+    end;
+  finally
+    if Assigned(ResponseJSON) then
+      ResponseJSON.Free;
+
+    if Assigned(JSON) then
+      JSON.Free;
+
+    if Assigned(JSONString) then
+      JSONString.Free;
+
+    if Assigned(Query) then
+      Query.Free;
+
+  end;
+end;
+
+procedure TFaturamentoController.PutItemNota(ARequestInfo: TIdHTTPRequestInfo; AResponseInfo: TIdHTTPResponseInfo);
+var
+  JSON: TJSONObject;
+  JSONValue: TJSONValue;
+  JSONString: TStringStream;
+  Query: TFDQuery;
+  ItemIDStr: string;
+  ItemID: Integer;
+begin
+  JSON := nil;
+  JSONString := nil;
+  Query := nil;
+
+  try
+    ItemIDStr := ARequestInfo.Document.ToLower.Replace('/nota/item/atualizar/', '').Trim(['/']);
+    ItemID := StrToIntDef(ItemIDStr, 0);
+    if ItemID = 0 then
+    begin
+      AResponseInfo.ResponseNo := 400;
+      AResponseInfo.ContentText := 'ItemID inválido na URL';
+      Exit;
+    end;
+
+    JSONString := TStringStream.Create;
+    ARequestInfo.PostStream.Position := 0;
+    JSONString.CopyFrom(ARequestInfo.PostStream, ARequestInfo.PostStream.Size);
+    JSONValue := TJSONObject.ParseJSONValue(JSONString.DataString);
+    JSON := JSONValue as TJSONObject;
+
+    Query := TFDQuery.Create(nil);
+    FDConnection.StartTransaction;
+    Query.Connection := FDConnection;
+    Query.SQL.Text :=
+      'UPDATE ItensNotaFiscal SET ProdutoID = :ProdutoID, Quantidade = :Quantidade, ValorUnitario = :ValorUnitario ' +
+      'WHERE NOTAID = :NotaID AND ID = :ItemID';
+    Query.ParamByName('NotaID').AsInteger := JSON.GetValue<Integer>('NotaID');
+    Query.ParamByName('ItemID').AsInteger := ItemID;
+    Query.ParamByName('ProdutoID').AsInteger := JSON.GetValue<Integer>('ProdutoID');
+    Query.ParamByName('Quantidade').AsInteger := JSON.GetValue<Integer>('Quantidade');
+    Query.ParamByName('ValorUnitario').AsFloat := JSON.GetValue<Double>('ValorUnitario');
+    Query.ExecSQL;
+    FDConnection.Commit;
+
+    AResponseInfo.ContentText := 'Item da nota atualizado com sucesso';
+  except
+    on E: Exception do
+    begin
+      FDConnection.Rollback;
+      AResponseInfo.ResponseNo := 500;
+      AResponseInfo.ContentText := 'Erro ao atualizar item da nota fiscal';
+      GravarLog('Erro no PutItemNota: ' + E.Message);
+    end;
+  end;
+
+  if Assigned(JSON) then
+    JSON.Free;
+
+  if Assigned(JSONString) then
+    JSONString.Free;
+
+  if Assigned(Query) then
+    Query.Free;
+
+end;
+
+procedure TFaturamentoController.PostAtualizarNota(ARequestInfo: TIdHTTPRequestInfo; AResponseInfo: TIdHTTPResponseInfo);
+var
+  JSON: TJSONObject;
+  JSONValue: TJSONValue;
+  JSONString: TStringStream;
+  Query: TFDQuery;
+  NotaID: Integer;
+begin
+  JSON := nil;
+  JSONString := nil;
+  Query := nil;
+
+  try
+    JSONString := TStringStream.Create;
+    ARequestInfo.PostStream.Position := 0;
+    JSONString.CopyFrom(ARequestInfo.PostStream, ARequestInfo.PostStream.Size);
+    JSONValue := TJSONObject.ParseJSONValue(JSONString.DataString);
+    JSON := JSONValue as TJSONObject;
+
+    NotaID := StrToIntDef(ARequestInfo.Document.Replace('/nota/atualizar/', ''), 0);
+    if NotaID = 0 then
+    begin
+      AResponseInfo.ResponseNo := 400;
+      AResponseInfo.ContentText := 'ID da nota inválido';
+      Exit;
+    end;
+
+    Query := TFDQuery.Create(nil);
+    FDConnection.StartTransaction;
+    Query.Connection := FDConnection;
+
+    Query.SQL.Text :=
+      'UPDATE NotasFiscais SET CNPJ_EMISSOR = :CNPJ, RAZAO_EMISSOR = :Razao, ' +
+      'DOCUMENTO_DEST = :DocDest, NOME_DEST = :NomeDest ' +
+      'WHERE ID = :id';
+
+    Query.ParamByName('id').AsInteger := NotaID;
+    Query.ParamByName('CNPJ').AsString := JSON.GetValue<string>('CNPJ_EMISSOR', '');
+    Query.ParamByName('Razao').AsString := JSON.GetValue<string>('RAZAO_EMISSOR', '');
+    Query.ParamByName('DocDest').AsString := JSON.GetValue<string>('DOCUMENTO_DEST', '');
+    Query.ParamByName('NomeDest').AsString := JSON.GetValue<string>('NOME_DEST', '');
+
+    Query.ExecSQL;
+    FDConnection.Commit;
+
+    AResponseInfo.ContentText := 'Dados da nota atualizados com sucesso';
+  except
+    on E: Exception do
+    begin
+      FDConnection.Rollback;
+      AResponseInfo.ResponseNo := 500;
+      AResponseInfo.ContentText := 'Erro ao atualizar dados da nota';
+      GravarLog('Erro no PostAtualizarNota: ' + E.Message);
+    end;
+  end;
+  if Assigned(JSON) then
+    JSON.Free;
+
+  if Assigned(JSONString) then
+    JSONString.Free;
+
+  if Assigned(Query) then
+    Query.Free;
+
+end;
+
+procedure TFaturamentoController.PostAtualizarNotaChave(ARequestInfo: TIdHTTPRequestInfo; AResponseInfo: TIdHTTPResponseInfo);
+var
+  JSON: TJSONObject;
+  JSONValue: TJSONValue;
+  JSONString: TStringStream;
+  Query: TFDQuery;
+  NotaID: Integer;
+begin
+  JSON := nil;
+  JSONString := nil;
+  Query := nil;
+
+  try
+    JSONString := TStringStream.Create;
+    ARequestInfo.PostStream.Position := 0;
+    JSONString.CopyFrom(ARequestInfo.PostStream, ARequestInfo.PostStream.Size);
+    JSONValue := TJSONObject.ParseJSONValue(JSONString.DataString);
+    JSON := JSONValue as TJSONObject;
+
+    NotaID := StrToIntDef(ARequestInfo.Document.Replace('/nota/atualizar/chave/', ''), 0);
+    if NotaID = 0 then
+    begin
+      AResponseInfo.ResponseNo := 400;
+      AResponseInfo.ContentText := 'ID da nota inválido';
+      Exit;
+    end;
+
+    Query := TFDQuery.Create(nil);
+    FDConnection.StartTransaction;
+    Query.Connection := FDConnection;
+
+    Query.SQL.Text := 'UPDATE NotasFiscais SET CHAVE = :Chave WHERE ID = :id';
+    Query.ParamByName('id').AsInteger := NotaID;
+    Query.ParamByName('Chave').AsString := JSON.GetValue<string>('Chave', '');
+
+    Query.ExecSQL;
+    FDConnection.Commit;
+
+    AResponseInfo.ContentText := 'Chave da nota atualizada com sucesso';
+  except
+    on E: Exception do
+    begin
+      FDConnection.Rollback;
+      AResponseInfo.ResponseNo := 500;
+      AResponseInfo.ContentText := 'Erro ao atualizar chave da nota';
+      GravarLog('Erro no PostAtualizarNotaChave: ' + E.Message);
+    end;
+  end;
+
+    if Assigned(JSON) then
+      JSON.Free;
+
+    if Assigned(JSONString) then
+      JSONString.Free;
+
+    if Assigned(Query) then
+      Query.Free;
+      
+end;
+
+procedure TFaturamentoController.PostAtualizarNotaValor(ARequestInfo: TIdHTTPRequestInfo; AResponseInfo: TIdHTTPResponseInfo);
+var
+  JSON: TJSONObject;
+  JSONValue: TJSONValue;
+  JSONString: TStringStream;
+  Query: TFDQuery;
+  NotaID: Integer;
+begin
+  JSON := nil;
+  JSONString := nil;
+  Query := nil;
+
+  try
+    JSONString := TStringStream.Create;
+    ARequestInfo.PostStream.Position := 0;
+    JSONString.CopyFrom(ARequestInfo.PostStream, ARequestInfo.PostStream.Size);
+    JSONValue := TJSONObject.ParseJSONValue(JSONString.DataString);
+    JSON := JSONValue as TJSONObject;
+
+    NotaID := StrToIntDef(ARequestInfo.Document.Replace('/nota/atualizar/valortotal/', ''), 0);
+    if NotaID = 0 then
+    begin
+      AResponseInfo.ResponseNo := 400;
+      AResponseInfo.ContentText := 'ID da nota inválido';
+      Exit;
+    end;
+
+    Query := TFDQuery.Create(nil);
+    FDConnection.StartTransaction;
+    Query.Connection := FDConnection;
+
+    Query.SQL.Text := 'UPDATE NotasFiscais SET ValorTotal = :ValorTotal WHERE ID = :id';
+    Query.ParamByName('id').AsInteger := NotaID;
+    Query.ParamByName('ValorTotal').AsFloat := JSON.GetValue<Double>('ValorTotal', 0);
+
+    Query.ExecSQL;
+    FDConnection.Commit;
+
+    AResponseInfo.ContentText := 'Valor total atualizado com sucesso';
+  except
+    on E: Exception do
+    begin
+      FDConnection.Rollback;
+      AResponseInfo.ResponseNo := 500;
+      AResponseInfo.ContentText := 'Erro ao atualizar valor total';
+      GravarLog('Erro no PostAtualizarNotaValor: ' + E.Message);
+    end;
+  end;
+
+      if Assigned(JSON) then
+      JSON.Free;
+
+    if Assigned(JSONString) then
+      JSONString.Free;
+
+    if Assigned(Query) then
+      Query.Free;
+      
+end;
+
+procedure TFaturamentoController.PostDeletarItemNota(ARequestInfo: TIdHTTPRequestInfo; AResponseInfo: TIdHTTPResponseInfo);
+var
+  ItemIDStr: string;
+  ItemID: Integer;
+  Query: TFDQuery;
+begin
+  ItemIDStr := ARequestInfo.Document.ToLower.Replace('/nota/item/deletar/', '').Trim(['/']);
+  ItemID := StrToIntDef(ItemIDStr, 0);
+
+  if ItemID = 0 then
+  begin
+    AResponseInfo.ResponseNo := 400;
+    AResponseInfo.ContentText := 'ItemID inválido na URL';
+    Exit;
+  end;
+
+  Query := TFDQuery.Create(nil);
+  try
+    FDConnection.StartTransaction;
+    Query.Connection := FDConnection;
+    Query.SQL.Text := 'DELETE FROM ItensNotaFiscal WHERE ID = :ItemID';
+    Query.ParamByName('ItemID').AsInteger := ItemID;
+    Query.ExecSQL;
+    FDConnection.Commit;
+
+    AResponseInfo.ContentText := 'Item deletado com sucesso';
+  except
+    on E: Exception do
+    begin
+      FDConnection.Rollback;
+      AResponseInfo.ResponseNo := 500;
+      AResponseInfo.ContentText := 'Erro ao deletar item da nota fiscal';
+      GravarLog('Erro no PostDeletarItemNota: ' + E.Message);
+    end;
+  end;
+  if Assigned(Query) then
+    Query.Free;
+
+end;
+
+procedure TFaturamentoController.PostDeletarNota(ARequestInfo: TIdHTTPRequestInfo; AResponseInfo: TIdHTTPResponseInfo);
+var
+  NotaIDStr: string;
+  NotaID: Integer;
+  Query: TFDQuery;
+begin
+  NotaIDStr := ARequestInfo.Document.ToLower.Replace('/nota/deletar/', '').Trim(['/']);
+  NotaID := StrToIntDef(NotaIDStr, 0);
+
+  if NotaID = 0 then
+  begin
+    AResponseInfo.ResponseNo := 400;
+    AResponseInfo.ContentText := 'ID da nota inválido';
+    Exit;
+  end;
+
+  Query := TFDQuery.Create(nil);
+  try
+    FDConnection.StartTransaction;
+    Query.Connection := FDConnection;
+
+    Query.SQL.Text := 'DELETE FROM ItensNotaFiscal WHERE NotaID = :NotaID';
+    Query.ParamByName('NotaID').AsInteger := NotaID;
+    Query.ExecSQL;
+
+    Query.SQL.Text := 'DELETE FROM NotasFiscais WHERE ID = :NotaID';
+    Query.ParamByName('NotaID').AsInteger := NotaID;
+    Query.ExecSQL;
+
+    FDConnection.Commit;
+
+    AResponseInfo.ContentText := 'Nota fiscal excluída com sucesso';
+  except
+    on E: Exception do
+    begin
+      FDConnection.Rollback;
+      AResponseInfo.ResponseNo := 500;
+      AResponseInfo.ContentText := 'Erro ao excluir nota fiscal';
+      GravarLog('Erro no PostDeletarNota: ' + E.Message);
+    end;
+  end;
+  if Assigned(Query) then
+    Query.Free;
+
+end;
+
+procedure TFaturamentoController.PostImprimirNota(ARequestInfo: TIdHTTPRequestInfo; AResponseInfo: TIdHTTPResponseInfo);
+var
+  JSON: TJSONObject;
+  JSONValue: TJSONValue;
+  JSONString: TStringStream;
+  NotaID: Integer;
+  Query: TFDQuery;
+  ProdutoID, Quantidade: Integer;
+  HTTP: TIdHTTP;
+  Payload, ResponseStream: TStringStream;
+  JSONPayload, JSONResponse: string;
+begin
+  JSON := nil;
+  JSONString := nil;
+  Query := nil;
+  HTTP := nil;
+  Payload := nil;
+  ResponseStream := nil;
+  try
+    try
+      JSONString := TStringStream.Create;
+      ARequestInfo.PostStream.Position := 0;
+      JSONString.CopyFrom(ARequestInfo.PostStream, ARequestInfo.PostStream.Size);
+      JSONValue := TJSONObject.ParseJSONValue(JSONString.DataString);
+      JSON := JSONValue as TJSONObject;
+
+      NotaID := JSON.GetValue<Integer>('NotaID');
+
+      Query := TFDQuery.Create(nil);
+      Query.Connection := FDConnection;
+      Query.SQL.Text := 'SELECT * FROM ItensNotaFiscal WHERE NotaID = :id';
+      Query.ParamByName('id').AsInteger := NotaID;
+      Query.Open;
+
+      if Query.IsEmpty then
+      begin
+        AResponseInfo.ResponseNo := 400;
+        AResponseInfo.ContentText := 'Nota sem itens';
+        Exit;
+      end;
+
+      HTTP := TIdHTTP.Create(nil);
+      HTTP.Request.ContentType := 'application/json';
+
+      while not Query.Eof do
+      begin
+        ProdutoID := Query.FieldByName('ProdutoID').AsInteger;
+        Quantidade := Query.FieldByName('Quantidade').AsInteger;
+
+        JSONPayload := Format('{"ProdutoID": %d, "Quantidade": %d}', [ProdutoID, Quantidade]);
+        Payload := TStringStream.Create(JSONPayload, TEncoding.UTF8);
+        ResponseStream := TStringStream.Create('', TEncoding.UTF8);
+
+        try
+          HTTP.Post('http://localhost:8081/produto/saldo', Payload, ResponseStream);
+          JSONResponse := ResponseStream.DataString;
+          if Pos('"status":"erro"', JSONResponse) > 0 then
+          begin
+            AResponseInfo.ResponseNo := 409;
+            AResponseInfo.ContentText := 'Saldo insuficiente para o produto ' + ProdutoID.ToString;
+            Exit;
+          end;
+        except
+          on E: Exception do
+          begin
+            AResponseInfo.ResponseNo := 409;
+            AResponseInfo.ContentText := 'Erro ao baixar saldo: ' + E.Message;
+            Exit;
+          end;
+        end;
+
+        FreeAndNil(Payload);
+        FreeAndNil(ResponseStream);
+
+        Query.Next;
+      end;
+
+      FDConnection.StartTransaction;
+      Query.Close;
+      Query.SQL.Text := 'UPDATE NotasFiscais SET Status = ''fechada'' WHERE ID = :id';
+      Query.ParamByName('id').AsInteger := NotaID;
+      Query.ExecSQL;
+      FDConnection.Commit;
+
+      AResponseInfo.ContentText := 'Nota impressa com sucesso e saldo baixado';
+    except
+      on E: Exception do
+      begin
+        FDConnection.Rollback;
+        AResponseInfo.ResponseNo := 500;
+        AResponseInfo.ContentText := 'Erro ao processar nota: ' + E.Message;
+        GravarLog('Erro no PostImprimirNota: ' + E.Message);
+      end;
+    end;
+  finally
+    if Assigned(Payload) then
+      FreeAndNil(Payload);
+
+    if Assigned(Payload) then
+      FreeAndNil(ResponseStream);
+
+    if Assigned(Payload) then
+      FreeAndNil(JSON);
+
+    FreeAndNil(JSONString);
+    FreeAndNil(Query);
+    FreeAndNil(HTTP);
+  end;
+end;
+
+
+procedure TFaturamentoController.PostItemNota(ARequestInfo: TIdHTTPRequestInfo; AResponseInfo: TIdHTTPResponseInfo);
+var
+  JSON: TJSONObject;
+  JSONValue: TJSONValue;
+  JSONString: TStringStream;
+  Query: TFDQuery;
+begin
+  JSON := nil;
+  JSONString := nil;
+  Query := nil;
+  try
+    try
+      JSONString := TStringStream.Create;
+      ARequestInfo.PostStream.Position := 0;
+      JSONString.CopyFrom(ARequestInfo.PostStream, ARequestInfo.PostStream.Size);
+      JSONValue := TJSONObject.ParseJSONValue(JSONString.DataString);
+      JSON := JSONValue as TJSONObject;
+
+      Query := TFDQuery.Create(nil);
+      FDConnection.StartTransaction;
+      Query.Connection := FDConnection;
+      Query.SQL.Text :=
+        'INSERT INTO ItensNotaFiscal (NotaID, ProdutoID, Quantidade, ValorUnitario) ' +
+        'VALUES (:NotaID, :ProdutoID, :Quantidade, :ValorUnitario)';
+      Query.ParamByName('NotaID').AsInteger := JSON.GetValue<Integer>('NotaID');
+      Query.ParamByName('ProdutoID').AsInteger := JSON.GetValue<Integer>('ProdutoID');
+      Query.ParamByName('Quantidade').AsInteger := JSON.GetValue<Integer>('Quantidade');
+      Query.ParamByName('ValorUnitario').AsFloat := JSON.GetValue<Double>('ValorUnitario');
+      Query.ExecSQL;
+      FDConnection.Commit;
+      AResponseInfo.ContentText := 'Item adicionado à nota com sucesso';
+    except
+      on E: Exception do
+      begin
+        FDConnection.Rollback;
+        AResponseInfo.ResponseNo := 500;
+        AResponseInfo.ContentText := 'Erro ao adicionar item à nota fiscal';
+        GravarLog('Erro no PutItemNota: ' + E.Message);
+      end;
+    end;
+  finally
+    if Assigned(JSON) then
+      JSON.Free;
+
+    if Assigned(JSONString) then
+      JSONString.Free;
+
+    if Assigned(Query) then
+      Query.Free;
+
+  end;
+end;
+
+procedure TFaturamentoController.GetItensNota(ARequestInfo: TIdHTTPRequestInfo; AResponseInfo: TIdHTTPResponseInfo);
+var
+  ID: string;
+  NotaID: Integer;
+  Query: TFDQuery;
+  JSONArray: TJSONArray;
+  JSONItem: TJSONObject;
+begin
+  ID := ARequestInfo.Document.Replace('/nota/itens/', '');
+  NotaID := StrToIntDef(ID, 0);
+  if NotaID = 0 then
+  begin
+    AResponseInfo.ResponseNo := 400;
+    AResponseInfo.ContentText := 'ID da nota inválido';
+    Exit;
+  end;
+
+  Query := TFDQuery.Create(nil);
+  JSONArray := TJSONArray.Create;
+  try
+    Query.Connection := FDConnection;
+    Query.SQL.Text :=
+      'SELECT i.ID, i.ProdutoID, p.Nome, i.Quantidade, i.ValorUnitario ' +
+      'FROM ItensNotaFiscal i ' +
+      'JOIN Produtos p ON i.ProdutoID = p.ID ' +
+      'WHERE i.NotaID = :NotaID';
+    Query.ParamByName('NotaID').AsInteger := NotaID;
+    Query.Open;
+
+    while not Query.Eof do
+    begin
+      JSONItem := TJSONObject.Create;
+      JSONItem.AddPair('ID', Query.FieldByName('ID').AsString);
+      JSONItem.AddPair('ProdutoID', Query.FieldByName('ProdutoID').AsString);
+      JSONItem.AddPair('Nome', Query.FieldByName('Nome').AsString);
+      JSONItem.AddPair('Quantidade', Query.FieldByName('Quantidade').AsString);
+      JSONItem.AddPair('ValorUnitario', Query.FieldByName('ValorUnitario').AsString);
+      JSONArray.AddElement(JSONItem);
+      Query.Next;
+    end;
+
+    AResponseInfo.ContentType := 'application/json';
+    AResponseInfo.ContentText := JSONArray.ToJSON;
+  finally
+    Query.Free;
+    JSONArray.Free;
+  end;
+end;
+
+procedure TFaturamentoController.GetNota(ARequestInfo: TIdHTTPRequestInfo; AResponseInfo: TIdHTTPResponseInfo);
+var
+  NotaQuery, ItemQuery: TFDQuery;
+  JSONNota, JSONItem: TJSONObject;
+  JSONArrayNotas, JSONArrayItens: TJSONArray;
+begin
+  NotaQuery := nil;
+  JSONArrayNotas := nil;
+  try
+    NotaQuery := TFDQuery.Create(nil);
+    NotaQuery.Connection := FDConnection;
+    NotaQuery.SQL.Text := 'SELECT * FROM NotasFiscais';
+    NotaQuery.Open;
+
+    JSONArrayNotas := TJSONArray.Create;
+
+    while not NotaQuery.Eof do
+    begin
+      JSONNota := TJSONObject.Create;
+      JSONNota.AddPair('ID', NotaQuery.FieldByName('ID').AsString);
+      JSONNota.AddPair('Chave', NotaQuery.FieldByName('Chave').AsString);
+      JSONNota.AddPair('CNPJ_EMISSOR', NotaQuery.FieldByName('CNPJ_EMISSOR').AsString);
+      JSONNota.AddPair('RAZAO_EMISSOR', NotaQuery.FieldByName('RAZAO_EMISSOR').AsString);
+      JSONNota.AddPair('DOCUMENTO_DEST', NotaQuery.FieldByName('DOCUMENTO_DEST').AsString);
+      JSONNota.AddPair('NOME_DEST', NotaQuery.FieldByName('NOME_DEST').AsString);
+      JSONNota.AddPair('Status', NotaQuery.FieldByName('Status').AsString);
+      JSONNota.AddPair('ValorTotal', NotaQuery.FieldByName('ValorTotal').AsString);
+
+      JSONArrayItens := TJSONArray.Create;
+
+      ItemQuery := TFDQuery.Create(nil);
+      ItemQuery.Connection := FDConnection;
+      ItemQuery.SQL.Text := 'SELECT * FROM ItensNotaFiscal WHERE NotaID = :id';
+      ItemQuery.ParamByName('id').AsInteger := NotaQuery.FieldByName('ID').AsInteger;
+      ItemQuery.Open;
+
+      while not ItemQuery.Eof do
+      begin
+        JSONItem := TJSONObject.Create;
+        JSONItem.AddPair('ProdutoID', ItemQuery.FieldByName('ProdutoID').AsString);
+        JSONItem.AddPair('Quantidade', ItemQuery.FieldByName('Quantidade').AsString);
+        JSONItem.AddPair('ValorUnitario', ItemQuery.FieldByName('ValorUnitario').AsString);
+        JSONArrayItens.AddElement(JSONItem);
+        ItemQuery.Next;
+      end;
+
+      JSONNota.AddPair('Itens', JSONArrayItens);
+      JSONArrayNotas.AddElement(JSONNota);
+
+      ItemQuery.Free;
+      NotaQuery.Next;
+    end;
+
+    AResponseInfo.ContentType := 'application/json';
+    AResponseInfo.ContentText := JSONArrayNotas.ToJSON;
+
+  finally
+    if Assigned(NotaQuery) then NotaQuery.Free;
+    if Assigned(JSONArrayNotas) then JSONArrayNotas.Free;
+  end;
+end;
+
+procedure TFaturamentoController.GetNotaID(ARequestInfo: TIdHTTPRequestInfo; AResponseInfo: TIdHTTPResponseInfo);
+var
+  ID: string;
+  NotaID: Integer;
+  NotaQuery, ItemQuery: TFDQuery;
+  JSONNota, JSONItem: TJSONObject;
+  JSONArray: TJSONArray;
+begin
+  NotaQuery := nil;
+  ItemQuery := nil;
+  JSONArray := nil;
+  try
+    ID := ARequestInfo.Document.Replace('/nota/', '');
+    if ID.Trim = '' then
+    begin
+      AResponseInfo.ResponseNo := 400;
+      AResponseInfo.ContentText := 'ID da nota não informada';
+      Exit;
+    end;
+
+    NotaQuery := TFDQuery.Create(nil);
+    NotaQuery.Connection := FDConnection;
+    NotaQuery.SQL.Text := 'SELECT * FROM NotasFiscais WHERE ID = :id';
+    NotaQuery.ParamByName('ID').AsString := ID;
+    NotaQuery.Open;
+
+    if NotaQuery.IsEmpty then
+    begin
+      AResponseInfo.ResponseNo := 404;
+      AResponseInfo.ContentText := 'Nota fiscal não encontrada';
+      Exit;
+    end;
+
+    NotaID := NotaQuery.FieldByName('ID').AsInteger;
+
+    JSONNota := TJSONObject.Create;
+    JSONNota.AddPair('ID', NotaQuery.FieldByName('ID').AsString);
+    JSONNota.AddPair('Chave', NotaQuery.FieldByName('Chave').AsString);
+    JSONNota.AddPair('CNPJ_EMISSOR', NotaQuery.FieldByName('CNPJ_EMISSOR').AsString);
+    JSONNota.AddPair('RAZAO_EMISSOR', NotaQuery.FieldByName('RAZAO_EMISSOR').AsString);
+    JSONNota.AddPair('DOCUMENTO_DEST', NotaQuery.FieldByName('DOCUMENTO_DEST').AsString);
+    JSONNota.AddPair('NOME_DEST', NotaQuery.FieldByName('NOME_DEST').AsString);
+    JSONNota.AddPair('Status', NotaQuery.FieldByName('Status').AsString);
+    JSONNota.AddPair('ValorTotal', NotaQuery.FieldByName('ValorTotal').AsString);
+
+    JSONArray := TJSONArray.Create;
+
+    ItemQuery := TFDQuery.Create(nil);
+    ItemQuery.Connection := FDConnection;
+    ItemQuery.SQL.Text := 'SELECT * FROM ItensNotaFiscal WHERE NotaID = :id';
+    ItemQuery.ParamByName('id').AsInteger := NotaID;
+    ItemQuery.Open;
+
+    while not ItemQuery.Eof do
+    begin
+      JSONItem := TJSONObject.Create;
+      JSONItem.AddPair('ProdutoID', ItemQuery.FieldByName('ProdutoID').AsString);
+      JSONItem.AddPair('Quantidade', ItemQuery.FieldByName('Quantidade').AsString);
+      JSONItem.AddPair('ValorUnitario', ItemQuery.FieldByName('ValorUnitario').AsString);
+      JSONArray.AddElement(JSONItem);
+      ItemQuery.Next;
+    end;
+
+    JSONNota.AddPair('Itens', JSONArray);
+    AResponseInfo.ContentType := 'application/json';
+    AResponseInfo.ContentText := JSONNota.ToJSON;
+  finally
+    if Assigned(NotaQuery) then
+      NotaQuery.Free;
+
+    if Assigned(ItemQuery) then
+      ItemQuery.Free;
+
+    if Assigned(JSONArray) then
+      JSONArray.Free;
+
+  end;
+end;
+
+end.
+

@@ -1,0 +1,22 @@
+object FaturamentoController: TFaturamentoController
+  OnCreate = ServiceCreate
+  DisplayName = 'FaturamentoController'
+  Height = 750
+  Width = 1000
+  PixelsPerInch = 120
+  object FDConnection: TFDConnection
+    Params.Strings = (
+      'DriverID=SQLite')
+    Left = 104
+    Top = 80
+  end
+  object FDPhysSQLiteDriverLink: TFDPhysSQLiteDriverLink
+    Left = 104
+    Top = 160
+  end
+  object IdHTTPServer: TIdHTTPServer
+    Bindings = <>
+    Left = 256
+    Top = 80
+  end
+end

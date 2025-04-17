@@ -1,0 +1,9 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<BorlandProject>
+	<Transactions>
+    <Transaction>2025/03/29 12:22:11.000.807,=C:\Users\arthu\Documents\Embarcadero\Studio\Projects\Unit1.pas</Transaction>
+    <Transaction>2025/03/29 12:23:05.000.094,C:\Users\arthu\Documents\Embarcadero\Studio\Projects\Unit1.dfm=C:\VIASOFT\FaturamentoService\Controller\Controller.dfm</Transaction>
+    <Transaction>2025/03/29 12:23:05.000.094,C:\Users\arthu\Documents\Embarcadero\Studio\Projects\Unit1.pas=C:\VIASOFT\FaturamentoService\Controller\Controller.pas</Transaction>
+    <Transaction>2025/03/29 12:23:30.000.749,C:\Users\arthu\Documents\Embarcadero\Studio\Projects\Project1.dproj=C:\VIASOFT\FaturamentoService\Server\FaturamentoService.dproj</Transaction>
+  </Transactions>
+</BorlandProject>
